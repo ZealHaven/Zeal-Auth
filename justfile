@@ -31,13 +31,13 @@ logs:
 migrate-up:
     #!/usr/bin/env bash
     set -euo pipefail
-    migrate -path migrations -database "${DATABASE_URL:-postgres://auth:auth@localhost:5433/auth?sslmode=disable}" up
+    migrate -path migrations -database "${DATABASE_URL:-postgres://auth:auth@localhost:5435/auth?sslmode=disable}" up
 
 # Rollback last migration
 migrate-down:
     #!/usr/bin/env bash
     set -euo pipefail
-    migrate -path migrations -database "${DATABASE_URL:-postgres://auth:auth@localhost:5433/auth?sslmode=disable}" down 1
+    migrate -path migrations -database "${DATABASE_URL:-postgres://auth:auth@localhost:5435/auth?sslmode=disable}" down 1
 
 # Run all tests
 test:
