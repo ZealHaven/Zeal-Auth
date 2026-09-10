@@ -12,6 +12,7 @@ import (
 	"github.com/zeal/auth/internal/config"
 	"github.com/zeal/auth/internal/db"
 	"github.com/zeal/auth/internal/handler"
+	"github.com/zeal/auth/internal/service"
 )
 
 func main() {
@@ -25,6 +26,10 @@ func main() {
 		log.Fatalf("db: %v", err)
 	}
 	defer pool.Close()
+
+	if err := service.EnsureInitialKey(ctx, pool, cfg.JWTKID, cfg.KeyEncryptionKey); err != nil {
+		log.Fatalf("ensure initial signing key: %v", err)
+	}
 
 	router := handler.NewRouter(pool)
 

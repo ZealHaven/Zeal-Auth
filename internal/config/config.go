@@ -18,6 +18,8 @@ type Config struct {
 
 	JWTSigningKeyPath string
 	JWTKID            string
+
+	KeyEncryptionKey string // hex-encoded 32-byte key for encrypting private keys at rest
 }
 
 func Load() *Config {
@@ -37,6 +39,8 @@ func Load() *Config {
 
 		JWTSigningKeyPath: getenv("JWT_SIGNING_KEY_PATH", "./keys/signing.key"),
 		JWTKID:            getenv("JWT_KID", "key-1"),
+
+		KeyEncryptionKey: os.Getenv("KEY_ENCRYPTION_KEY"),
 	}
 }
 

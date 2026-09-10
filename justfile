@@ -41,15 +41,15 @@ migrate-down:
 
 # Run all tests
 test:
-    go test ./... -count=1
+    go test ./... -count=1 -p 1
 
 # Run all tests with verbose output
 test-verbose:
-    go test ./... -v -count=1
+    go test ./... -v -count=1 -p 1
 
 # Run tests with race detector
 test-race:
-    go test ./... -race -count=1
+    go test ./... -race -count=1 -p 1
 
 # Run integration tests (requires running DB + Redis)
 test-integration:
