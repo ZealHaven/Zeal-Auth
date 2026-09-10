@@ -1,0 +1,97 @@
+erDiagram
+    USERS ||--o{ FEDERATED_IDENTITIES : has
+    USERS ||--o{ EMAIL_VERIFICATION_TOKENS : has
+    USERS ||--o{ PASSWORD_RESET_TOKENS : has
+    USERS ||--o{ AUTHORIZATION_CODES : requests
+    USERS ||--o{ REFRESH_TOKENS : owns
+    CLIENTS ||--o{ CLIENT_REDIRECT_URIS : allows
+    CLIENTS ||--o{ AUTHORIZATION_CODES : issued_for
+    CLIENTS ||--o{ REFRESH_TOKENS : issued_for
+    REFRESH_TOKENS |o--o| REFRESH_TOKENS : replaced_by
+
+    USERS {
+        uuid id PK
+        text email UK
+        text password_hash "nullable, social-only users have none"
+        boolean email_verified
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    FEDERATED_IDENTITIES {
+        uuid id PK
+        uuid user_id FK
+        text provider "google, github"
+        text provider_user_id "the IdP's sub claim"
+        text email_at_provider "nullable"
+        timestamptz created_at
+    }
+
+    EMAIL_VERIFICATION_TOKENS {
+        uuid id PK
+        uuid user_id FK
+        text token_hash
+        timestamptz expires_at
+        timestamptz used_at "nullable, single-use"
+        timestamptz created_at
+    }
+
+    PASSWORD_RESET_TOKENS {
+        uuid id PK
+        uuid user_id FK
+        text token_hash
+        timestamptz expires_at
+        timestamptz used_at "nullable, single-use"
+        timestamptz created_at
+    }
+
+    CLIENTS {
+        text id PK "the client_id"
+        text client_secret_hash
+        text name
+        text status "active, disabled"
+        timestamptz created_at
+    }
+
+    CLIENT_REDIRECT_URIS {
+        uuid id PK
+        text client_id FK
+        text redirect_uri "exact match only, no prefix"
+    }
+
+    AUTHORIZATION_CODES {
+        text code_hash PK
+        text client_id FK
+        uuid user_id FK
+        text redirect_uri "must match a CLIENT_REDIRECT_URIS row"
+        text code_challenge
+        text code_challenge_method "S256"
+        text scope
+        timestamptz expires_at
+        timestamptz used_at "nullable, single-use"
+        timestamptz created_at
+    }
+
+    REFRESH_TOKENS {
+        uuid id PK
+        text token_hash UK
+        uuid family_id "groups rotations for theft detection"
+        uuid user_id FK
+        text client_id FK
+        text scope
+        timestamptz expires_at
+        timestamptz revoked_at "nullable"
+        uuid replaced_by_id FK "nullable, self-reference"
+        timestamptz created_at
+    }
+
+    SIGNING_KEYS {
+        uuid id PK
+        text kid UK
+        text algorithm "RS256"
+        text public_key
+        text private_key_encrypted
+        text status "active, retiring, retired"
+        timestamptz created_at
+        timestamptz rotated_at "nullable"
+    }

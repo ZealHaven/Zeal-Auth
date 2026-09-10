@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auth Platform — Interactive Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0F1319;
+    --panel:#171D26;
+    --panel-alt:#1D2531;
+    --border:#2A3341;
+    --text:#E7ECF2;
+    --muted:#8493A6;
+    --provider:#5FD9C0;
+    --broker:#F0A860;
+    --data:#8C9EFF;
+    --client:#C9D3E0;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter',system-ui,sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 24px 60px;}
+
+  header{margin-bottom:22px;}
+  header h1{
+    font-size:22px;
+    font-weight:700;
+    margin:0 0 4px;
+    letter-spacing:-0.01em;
+  }
+  header p{
+    margin:0;
+    color:var(--muted);
+    font-size:14px;
+  }
+
+  nav.tabs{
+    display:flex;
+    gap:4px;
+    margin:22px 0 20px;
+    border-bottom:1px solid var(--border);
+  }
+  nav.tabs button{
+    background:none;
+    border:none;
+    color:var(--muted);
+    font-family:inherit;
+    font-size:14px;
+    font-weight:600;
+    padding:10px 4px;
+    margin-right:22px;
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+    transition:color .15s ease, border-color .15s ease;
+  }
+  nav.tabs button:hover{color:var(--text);}
+  nav.tabs button.active{color:var(--text);border-color:var(--provider);}
+
+  section.view{display:none;}
+  section.view.active{display:block;}
+
+  /* ---------- Architecture ---------- */
+  .legend{
+    display:flex;
+    flex-wrap:wrap;
+    gap:16px;
+    margin-bottom:16px;
+    font-size:12.5px;
+    color:var(--muted);
+  }
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+
+  .diagram-row{
+    display:flex;
+    gap:20px;
+    align-items:flex-start;
+  }
+  .canvas-shell{
+    position:relative;
+    width:100%;
+    padding-top:45.5%; /* 410/900 aspect */
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:10px;
+    flex:1 1 620px;
+    min-width:280px;
+  }
+  .canvas-inner{position:absolute;inset:0;}
+  svg.lines{position:absolute;inset:0;width:100%;height:100%;}
+  .node{
+    position:absolute;
+    border:1px solid var(--border);
+    background:var(--panel-alt);
+    border-radius:8px;
+    padding:8px 10px;
+    cursor:pointer;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    transition:transform .12s ease, border-color .12s ease, background .12s ease;
+  }
+  .node:hover{transform:translateY(-1px);}
+  .node .t{font-size:13px;font-weight:600;}
+  .node .s{font-size:10.5px;color:var(--muted);margin-top:2px;}
+  .node.provider{border-color:var(--provider);}
+  .node.broker{border-color:var(--broker);}
+  .node.data{border-color:var(--data);}
+  .node.client{border-color:var(--client);}
+  .node.selected{background:var(--panel);box-shadow:0 0 0 2px currentColor inset;}
+  .node.dim{opacity:.45;}
+
+  aside.detail{
+    flex:0 0 270px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:18px;
+    min-height:120px;
+  }
+  aside.detail .tag{
+    display:inline-block;
+    font-size:11px;
+    font-family:'IBM Plex Mono',monospace;
+    color:var(--bg);
+    background:var(--muted);
+    padding:2px 7px;
+    border-radius:4px;
+    margin-bottom:10px;
+  }
+  aside.detail h3{margin:0 0 8px;font-size:16px;}
+  aside.detail p{margin:0;font-size:13.5px;color:#C4CCD8;}
+  aside.detail .hint{color:var(--muted);font-size:13px;}
+
+  @media (max-width:720px){
+    .diagram-row{flex-direction:column;}
+    aside.detail{flex:1 1 auto;width:100%;}
+  }
+
+  /* ---------- Roadmap ---------- */
+  .phase-row{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+  .phase-row button{
+    background:var(--panel);
+    border:1px solid var(--border);
+    color:var(--muted);
+    font-family:inherit;
+    font-size:13px;
+    font-weight:600;
+    padding:9px 14px;
+    border-radius:7px;
+    cursor:pointer;
+    transition:border-color .15s ease, color .15s ease;
+  }
+  .phase-row button:hover{color:var(--text);}
+  .phase-row button.active{color:var(--text);border-color:var(--provider);background:var(--panel-alt);}
+
+  .phase-card{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:22px 24px;
+  }
+  .phase-card h2{margin:0 0 4px;font-size:18px;}
+  .phase-card .goal{color:var(--muted);font-size:13.5px;margin:0 0 16px;}
+  .phase-card ul{margin:0;padding-left:0;list-style:none;}
+  .phase-card li{
+    font-size:13.5px;
+    padding:8px 0;
+    border-top:1px solid var(--border);
+    color:#D2DAE5;
+  }
+  .phase-card li:first-child{border-top:none;}
+
+  /* ---------- Flows ---------- */
+  .flow-row{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+  .flow-row button{
+    background:var(--panel);
+    border:1px solid var(--border);
+    color:var(--muted);
+    font-family:inherit;
+    font-size:13px;
+    font-weight:600;
+    padding:9px 14px;
+    border-radius:7px;
+    cursor:pointer;
+    text-align:left;
+  }
+  .flow-row button:hover{color:var(--text);}
+  .flow-row button.active{color:var(--text);border-color:var(--broker);background:var(--panel-alt);}
+
+  .steps{list-style:none;margin:0;padding:0;counter-reset:step;}
+  .steps li{
+    counter-increment:step;
+    position:relative;
+    padding:0 0 20px 34px;
+    border-left:1px solid var(--border);
+    margin-left:11px;
+    font-size:13.5px;
+    color:#D2DAE5;
+  }
+  .steps li:last-child{border-left-color:transparent;padding-bottom:2px;}
+  .steps li::before{
+    content:counter(step);
+    position:absolute;
+    left:-11px;top:0;
+    width:22px;height:22px;
+    background:var(--panel-alt);
+    border:1px solid var(--broker);
+    color:var(--text);
+    border-radius:50%;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    display:flex;align-items:center;justify-content:center;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Auth platform — interactive overview</h1>
+    <p>Architecture, rollout order, and the flows that put them together.</p>
+  </header>
+
+  <nav class="tabs">
+    <button class="active" data-tab="arch">Architecture</button>
+    <button data-tab="roadmap">Roadmap</button>
+    <button data-tab="flows">Flows</button>
+  </nav>
+
+  <!-- ARCHITECTURE -->
+  <section class="view active" id="view-arch">
+    <div class="legend">
+      <span><i class="dot" style="background:var(--client)"></i>Client apps</span>
+      <span><i class="dot" style="background:var(--provider)"></i>Provider core</span>
+      <span><i class="dot" style="background:var(--broker)"></i>Federation / broker</span>
+      <span><i class="dot" style="background:var(--data)"></i>Data &amp; events</span>
+    </div>
+    <div class="diagram-row">
+      <div class="canvas-shell">
+        <div class="canvas-inner">
+          <svg class="lines" viewBox="0 0 900 410" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="#5B6676"/>
+              </marker>
+            </defs>
+            <line x1="450" y1="80"  x2="450" y2="138" stroke="#5B6676" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <line x1="383" y1="240" x2="150" y2="298" stroke="#5B6676" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <line x1="450" y1="240" x2="350" y2="298" stroke="#5B6676" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <line x1="517" y1="240" x2="555" y2="298" stroke="#5B6676" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <line x1="650" y1="335" x2="688" y2="335" stroke="#5B6676" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <line x1="600" y1="185" x2="688" y2="175" stroke="#5B6676" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+          </svg>
+
+          <div class="node client"   style="left:37.78%;top:4.88%;width:24.44%;height:14.63%" data-node="clients">
+            <div class="t">Client apps</div><div class="s mono">your products + 3rd-party</div>
+          </div>
+          <div class="node provider" style="left:33.33%;top:34.15%;width:33.33%;height:24.39%" data-node="core">
+            <div class="t">Auth Core</div><div class="s mono">/authorize /token /jwks.json</div>
+          </div>
+          <div class="node data"     style="left:4.44%;top:73.17%;width:20%;height:17.07%" data-node="postgres">
+            <div class="t">Postgres</div><div class="s mono">users · clients · scopes</div>
+          </div>
+          <div class="node data"     style="left:27.78%;top:73.17%;width:20%;height:17.07%" data-node="redis">
+            <div class="t">Redis</div><div class="s mono">sessions · revocation</div>
+          </div>
+          <div class="node broker"   style="left:51.11%;top:73.17%;width:21.11%;height:17.07%" data-node="broker">
+            <div class="t">Federation broker</div><div class="s mono">OAuth2 client</div>
+          </div>
+          <div class="node broker"   style="left:76.67%;top:73.17%;width:21.11%;height:17.07%" data-node="idps">
+            <div class="t">External IdPs</div><div class="s mono">Google · GitHub</div>
+          </div>
+          <div class="node data"     style="left:76.67%;top:34.15%;width:21.11%;height:17.07%" data-node="kafka">
+            <div class="t">Kafka</div><div class="s mono">auth events</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="detail" id="detail">
+        <p class="hint">Click a component to read what it does.</p>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section class="view" id="view-roadmap">
+    <div class="phase-row" id="phase-row"></div>
+    <div class="phase-card" id="phase-card"></div>
+  </section>
+
+  <!-- FLOWS -->
+  <section class="view" id="view-flows">
+    <div class="flow-row" id="flow-row"></div>
+    <ol class="steps" id="flow-steps"></ol>
+  </section>
+
+</div>
+
+<script>
+  // ---------- tab switching ----------
+  document.querySelectorAll('nav.tabs button').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('section.view').forEach(v=>v.classList.remove('active'));
+      document.getElementById('view-'+btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ---------- architecture ----------
+  const nodeData = {
+    clients:  {title:"Client apps", tag:"Relying party", desc:"Your own products first, then any registered 3rd-party app. Each one redirects users to /authorize, exchanges the returned code for tokens, then verifies the JWT locally against your JWKS \u2014 no callback to the auth service on every request."},
+    core:     {title:"Auth Core", tag:"Go + fosite", desc:"The authorization server. Runs /authorize, /token, /userinfo, the OIDC discovery document and /jwks.json. Issues RS256 JWT access + ID tokens and opaque refresh tokens. The only piece client apps talk to directly."},
+    postgres: {title:"Postgres", tag:"Durable store", desc:"Users, credentials, linked social identities, registered clients (client_id / secret, redirect_uri allowlist), and scope definitions. Give it its own schema from day one so it stays extractable later."},
+    redis:    {title:"Redis", tag:"Ephemeral store", desc:"SSO session cookies and the refresh-token revocation list. Lets you rotate and revoke tokens without hitting Postgres on every check."},
+    broker:   {title:"Federation broker", tag:"OAuth2 client", desc:"Your service acting as a client of Google, GitHub, etc. Normalizes whatever profile shape each provider returns into your internal user record, then links or creates an account."},
+    idps:     {title:"External IdPs", tag:"Google \u00b7 GitHub \u00b7 \u2026", desc:"The upstream providers you delegate first-time trust to, so users can sign up without ever picking a password."},
+    kafka:    {title:"Kafka", tag:"Event log", desc:"Async auth events \u2014 signup, login, token issued or revoked. Feeds an audit trail now, and later feeds fraud detection or a welcome email without blocking the request path."}
+  };
+  const detailEl = document.getElementById('detail');
+  document.querySelectorAll('.node').forEach(node=>{
+    node.addEventListener('click',()=>{
+      const id = node.dataset.node;
+      document.querySelectorAll('.node').forEach(n=>{
+        n.classList.remove('selected');
+        n.classList.toggle('dim', n!==node);
+      });
+      node.classList.add('selected');
+      node.classList.remove('dim');
+      const d = nodeData[id];
+      detailEl.innerHTML = '<span class="tag">'+d.tag+'</span><h3>'+d.title+'</h3><p>'+d.desc+'</p>';
+    });
+  });
+
+  // ---------- roadmap ----------
+  const phases = [
+    {id:0, name:"Phase 0", goal:"Own products can log in via SSO", features:[
+      "Email + password signup / login","Authorization Code + PKCE flow","OIDC discovery + JWKS",
+      "Google / GitHub social login (broker)","Client registry (client_id/secret, redirect_uri allowlist)",
+      "JWT access + refresh tokens","Shared SSO session cookie","Email verification, password reset"
+    ]},
+    {id:1, name:"Phase 1", goal:"Harden before opening to 3rd parties", features:[
+      "Consent screen (scope-based)","Scope definitions per product","Refresh token rotation + revocation",
+      "Rate limiting / brute-force protection","Audit log via Kafka","Basic admin dashboard"
+    ]},
+    {id:2, name:"Phase 2", goal:"Open to others \u2014 \u201cLogin with [You]\u201d", features:[
+      "Developer self-service portal","MFA (TOTP, WebAuthn)","Token introspection endpoint",
+      "Dynamic Client Registration (RFC 7591)","Fine-grained RBAC / scopes","Event webhooks"
+    ]},
+    {id:3, name:"Phase 3", goal:"Scale & harden for enterprise", features:[
+      "Multi-tenancy (isolated user pools)","Anomaly / fraud detection","Session & device management, remote logout",
+      "Account-linking UI","Automated key rotation","GDPR export / delete"
+    ]}
+  ];
+  const phaseRow = document.getElementById('phase-row');
+  const phaseCard = document.getElementById('phase-card');
+  function renderPhase(id){
+    const p = phases[id];
+    phaseCard.innerHTML = '<h2>'+p.name+'</h2><p class="goal">'+p.goal+'</p><ul>'+
+      p.features.map(f=>'<li>'+f+'</li>').join('')+'</ul>';
+    phaseRow.querySelectorAll('button').forEach(b=>b.classList.toggle('active', +b.dataset.id===id));
+  }
+  phases.forEach(p=>{
+    const b=document.createElement('button');
+    b.textContent=p.name; b.dataset.id=p.id;
+    b.addEventListener('click',()=>renderPhase(p.id));
+    phaseRow.appendChild(b);
+  });
+  renderPhase(0);
+
+  // ---------- flows ----------
+  const flows = [
+    {id:'A', label:'A \u00b7 New signup via Google', steps:[
+      'User clicks \u201cContinue with Google\u201d on your login page',
+      'Auth platform redirects to Google\u2019s consent screen',
+      'Google redirects back with a code; Auth platform exchanges it for the profile',
+      'Lookup by email / sub \u2014 create user if new, or prompt to link if the email exists without a Google link',
+      'Auth platform sets the SSO session cookie and issues tokens',
+      'Redirect to the originating app, or your dashboard if signup was direct'
+    ]},
+    {id:'B', label:'B \u00b7 3rd-party app uses you as SSO', steps:[
+      'Developer registers their app in your dev portal, gets client_id / client_secret',
+      'User clicks \u201cLogin with [You]\u201d on their app',
+      'App redirects to /authorize with client_id, redirect_uri, scope, state, code_challenge',
+      'No session \u2192 show login (flow A applies). Has session \u2192 skip to consent',
+      'Consent screen: \u201cApp X wants: email, profile\u201d \u2014 user approves',
+      'Redirect back to redirect_uri with an authorization code',
+      'App\u2019s backend exchanges the code (+ code_verifier) at /token for tokens',
+      'App verifies the JWT locally via your JWKS and reads the sub claim as the user id'
+    ]},
+    {id:'C', label:'C \u00b7 SSO across your own products', steps:[
+      'User already holds a valid session cookie on auth.yourdomain.com',
+      'Opens Product B, which redirects to /authorize',
+      'Auth platform sees the valid session and silently issues a code, no login screen shown',
+      'Product B exchanges the code for tokens \u2014 user is in with no visible redirect flicker'
+    ]},
+    {id:'D', label:'D \u00b7 Token refresh', steps:[
+      'Client app\u2019s access token expires',
+      'App calls /token with grant_type=refresh_token',
+      'Auth platform checks the Redis revocation list',
+      'Refresh token is rotated and a new access + refresh pair is issued'
+    ]},
+    {id:'E', label:'E \u00b7 Logout', steps:[
+      'User logs out from any product, hitting /logout',
+      'Session cookie is cleared',
+      '(Phase 2+) Back-channel or front-channel logout notifies connected client apps to drop their sessions too'
+    ]}
+  ];
+  const flowRow = document.getElementById('flow-row');
+  const flowSteps = document.getElementById('flow-steps');
+  function renderFlow(id){
+    const f = flows.find(x=>x.id===id);
+    flowSteps.innerHTML = f.steps.map(s=>'<li>'+s+'</li>').join('');
+    flowRow.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b.dataset.id===id));
+  }
+  flows.forEach(f=>{
+    const b=document.createElement('button');
+    b.textContent=f.label; b.dataset.id=f.id;
+    b.addEventListener('click',()=>renderFlow(f.id));
+    flowRow.appendChild(b);
+  });
+  renderFlow('A');
+</script>
+</body>
+</html>
