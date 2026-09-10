@@ -12,6 +12,7 @@ import (
 	"github.com/zeal/auth/internal/config"
 	"github.com/zeal/auth/internal/db"
 	"github.com/zeal/auth/internal/handler"
+	"github.com/zeal/auth/internal/repository"
 	"github.com/zeal/auth/internal/service"
 )
 
@@ -31,7 +32,9 @@ func main() {
 		log.Fatalf("ensure initial signing key: %v", err)
 	}
 
-	router := handler.NewRouter(pool)
+	userRepo := repository.NewUserRepository(pool)
+	authSvc := service.NewAuthService(userRepo)
+	router := handler.NewRouter(pool, authSvc)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.ServerPort,

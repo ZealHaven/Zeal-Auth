@@ -4,9 +4,11 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zeal/auth/internal/service"
 )
 
-func NewRouter(pool *pgxpool.Pool) http.Handler {
+func NewRouter(pool *pgxpool.Pool, auth *service.AuthService) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -17,6 +19,10 @@ func NewRouter(pool *pgxpool.Pool) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+
+	ah := NewAuthHandler(auth)
+	mux.HandleFunc("POST /signup", ah.Signup)
+	mux.HandleFunc("POST /login", ah.Login)
 
 	return mux
 }
