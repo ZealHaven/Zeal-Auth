@@ -14,6 +14,7 @@ type RouterDeps struct {
 	Email     *service.EmailService
 	OAuth     *OAuthHandler
 	OAuth2    *OAuth2Handler
+	Broker    *BrokerHandler
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
@@ -45,6 +46,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("GET /jwks.json", deps.OAuth2.JWKS)
 		mux.HandleFunc("GET /logout", deps.OAuth2.Logout)
 		mux.HandleFunc("POST /admin/clients", deps.OAuth2.CreateClient)
+	}
+
+	// Federation broker routes
+	if deps.Broker != nil {
+		mux.HandleFunc("GET /oauth/google", deps.Broker.GoogleInitiate)
+		mux.HandleFunc("GET /oauth/google/callback", deps.Broker.GoogleCallback)
+		mux.HandleFunc("GET /oauth/github", deps.Broker.GitHubInitiate)
+		mux.HandleFunc("GET /oauth/github/callback", deps.Broker.GitHubCallback)
 	}
 
 	return mux

@@ -110,6 +110,22 @@ func TestE2E_Client_Create_SecretShownOnce(t *testing.T)   // AC-CLIENT-1
 func TestE2E_Client_Disable_RejectsAuthorize(t *testing.T) // AC-CLIENT-3
 ```
 
+### 9. Federation broker integration
+
+```go
+func TestE2E_Broker_Google_Initiate_Redirect(t *testing.T)         // AC-BROKER-1: GET /oauth/google → 307 to Google
+func TestE2E_Broker_Google_Callback_NewUser(t *testing.T)          // AC-BROKER-3: code+state → user created, email_verified=true, password_hash=NULL
+func TestE2E_Broker_Google_Callback_ExistingLinked(t *testing.T)   // AC-BROKER-5: linked user → login, session established
+func TestE2E_Broker_Google_Callback_UnlinkedEmail(t *testing.T)    // AC-BROKER-4: email match, no link → redirect to /link-account
+func TestE2E_Broker_Google_Callback_BadState(t *testing.T)         // AC-BROKER-6: invalid state → redirect /login?error=invalid_state
+func TestE2E_Broker_Google_Callback_StateReuse(t *testing.T)       // AC-BROKER-6: reused state → rejected
+func TestE2E_Broker_Google_Callback_IdpError(t *testing.T)         // AC-BROKER-7: IdP down → redirect /login?error=idp_error
+func TestE2E_Broker_GitHub全流程(t *testing.T)                     // AC-BROKER-8: same flow for GitHub
+func TestE2E_Broker_LinkAccount_Flow(t *testing.T)                 // AC-BROKER-4+link: /link-account → login → identity linked → redirect
+```
+
+Uses mock IdP `httptest.Server` for Google/GitHub (same pattern as unit tests, but exercised through the full router stack with real DB + Redis). Validates HTTP status codes, redirect locations, JSON responses, and DB state.
+
 ### 9. Run command
 
 ```bash
@@ -118,11 +134,15 @@ go test ./internal/handler/ -run "TestE2E" -v -count=1
 
 # Specific area
 go test ./internal/handler/ -run "TestE2E_AuthorizeCodeFlow" -v
+
+# Federation broker only
+go test ./internal/handler/ -run "TestE2E_Broker" -v
 ```
 
 ## Acceptance Criteria
 
 - [ ] All 34 ACs from spec covered by at least one `TestE2E_*` test
+- [ ] AC-BROKER-1 through AC-BROKER-8 covered by `TestE2E_Broker_*` tests
 - [ ] Tests use real Postgres + Redis (no mocks)
 - [ ] Each test is independent (unique emails, fresh data or cleanup)
 - [ ] `go test ./internal/handler/ -run "TestE2E" -v` passes with 0 failures
@@ -139,3 +159,4 @@ go test ./internal/handler/ -run "TestE2E_AuthorizeCodeFlow" -v
 - `internal/handler/integration_oauth_test.go`
 - `internal/handler/integration_session_test.go`
 - `internal/handler/integration_oidc_test.go`
+- `internal/handler/integration_broker_test.go` (Google + GitHub federation flows)
