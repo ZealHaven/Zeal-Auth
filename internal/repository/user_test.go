@@ -27,22 +27,22 @@ func TestMain(m *testing.M) {
 		panic("connect pool: " + err.Error())
 	}
 
-	// Run migrations
-	_, _ = testPool.Exec(ctx, "DROP SCHEMA IF EXISTS auth CASCADE")
-	_, _ = testPool.Exec(ctx, "DROP TABLE IF EXISTS public.schema_migrations")
+	// Run migrations (idempotent)
 	_, _ = testPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS auth")
-	out, _ := os.ReadFile("../../migrations/000001_init.up.sql")
-	if out != nil {
-		_, err = testPool.Exec(ctx, string(out))
-		if err != nil {
-			panic("run migration: " + err.Error())
+	var exists bool
+	_ = testPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='auth' AND table_name='users')`).Scan(&exists)
+	if !exists {
+		out, _ := os.ReadFile("../../migrations/000001_init.up.sql")
+		if out != nil {
+			_, err = testPool.Exec(ctx, string(out))
+			if err != nil {
+				panic("run migration: " + err.Error())
+			}
 		}
 	}
 
 	code := m.Run()
 
-	_, _ = testPool.Exec(ctx, "DROP SCHEMA IF EXISTS auth CASCADE")
-	_, _ = testPool.Exec(ctx, "DROP TABLE IF EXISTS public.schema_migrations")
 	testPool.Close()
 	os.Exit(code)
 }

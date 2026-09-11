@@ -32,12 +32,37 @@ func main() {
 		log.Fatalf("ensure initial signing key: %v", err)
 	}
 
+	keySvc := service.NewKeyService(pool, cfg.KeyEncryptionKey)
+
+	fositeCfg := handler.DefaultFositeConfig(
+		"https://"+cfg.CookieDomain,
+		cfg.CookieDomain,
+	)
+	fositeCfg.GlobalSecret = []byte(os.Getenv("FOSITE_GLOBAL_SECRET"))
+	if len(fositeCfg.GlobalSecret) < 32 {
+		fositeCfg.GlobalSecret = []byte("fosite-dev-secret-replace-in-prod-32bytes!!")
+	}
+
+	oauthHandler, err := handler.NewFositeServer(pool, keySvc, fositeCfg)
+	if err != nil {
+		log.Fatalf("fosite server: %v", err)
+	}
+
+	oauth2Handler := handler.NewOAuth2Handler(oauthHandler, pool, keySvc, fositeCfg)
+
 	userRepo := repository.NewUserRepository(pool)
 	verificationRepo := repository.NewVerificationRepository(pool)
 	resetRepo := repository.NewResetRepository(pool)
 	authSvc := service.NewAuthService(userRepo)
 	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, pool)
-	router := handler.NewRouter(pool, authSvc, emailSvc)
+
+	router := handler.NewRouter(handler.RouterDeps{
+		Pool:   pool,
+		Auth:   authSvc,
+		Email:  emailSvc,
+		OAuth:  oauthHandler,
+		OAuth2: oauth2Handler,
+	})
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.ServerPort,

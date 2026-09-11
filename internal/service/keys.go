@@ -271,3 +271,50 @@ func ParseRSAPrivateKey(privPEM []byte) (*rsa.PrivateKey, error) {
 	}
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
+
+// ParseRSAPublicKeyPEM parses a PEM-encoded RSA public key.
+func ParseRSAPublicKeyPEM(pubPEM []byte) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode(pubPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse public key: %w", err)
+	}
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA public key")
+	}
+	return rsaPub, nil
+}
+
+// KeyService wraps key operations with pool and encryption key.
+type KeyService struct {
+	pool   *pgxpool.Pool
+	encKey string
+}
+
+func NewKeyService(pool *pgxpool.Pool, encKeyHex string) *KeyService {
+	return &KeyService{pool: pool, encKey: encKeyHex}
+}
+
+func (ks *KeyService) GetActivePrivateKey(ctx context.Context) (*rsa.PrivateKey, error) {
+	kp, err := GetActiveKey(ctx, ks.pool, ks.encKey)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRSAPrivateKey(kp.PrivateKeyPEM)
+}
+
+func (ks *KeyService) GetActivePublicKeyPEM(ctx context.Context) ([]byte, error) {
+	kp, err := GetActiveKey(ctx, ks.pool, ks.encKey)
+	if err != nil {
+		return nil, err
+	}
+	return kp.PublicKeyPEM, nil
+}
+
+func (ks *KeyService) GetAllActiveKeys(ctx context.Context) ([]*KeyPair, error) {
+	return GetAllActiveKeys(ctx, ks.pool, ks.encKey)
+}
