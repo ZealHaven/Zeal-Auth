@@ -33,8 +33,11 @@ func main() {
 	}
 
 	userRepo := repository.NewUserRepository(pool)
+	verificationRepo := repository.NewVerificationRepository(pool)
+	resetRepo := repository.NewResetRepository(pool)
 	authSvc := service.NewAuthService(userRepo)
-	router := handler.NewRouter(pool, authSvc)
+	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, pool)
+	router := handler.NewRouter(pool, authSvc, emailSvc)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.ServerPort,

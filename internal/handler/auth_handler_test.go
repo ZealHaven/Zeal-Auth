@@ -57,12 +57,18 @@ func setupHandlerTest(t *testing.T) *AuthHandler {
 	if testPool == nil {
 		t.Fatal("testPool not initialized")
 	}
-	// Clean users table
+	// Clean tables
 	_, _ = testPool.Exec(context.Background(), "DELETE FROM auth.users")
+	_, _ = testPool.Exec(context.Background(), "DELETE FROM auth.email_verification_tokens")
+	_, _ = testPool.Exec(context.Background(), "DELETE FROM auth.password_reset_tokens")
+	_, _ = testPool.Exec(context.Background(), "DELETE FROM auth.refresh_tokens")
 
 	userRepo := repository.NewUserRepository(testPool)
+	verificationRepo := repository.NewVerificationRepository(testPool)
+	resetRepo := repository.NewResetRepository(testPool)
 	authSvc := service.NewAuthService(userRepo)
-	return NewAuthHandler(authSvc)
+	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, testPool)
+	return NewAuthHandler(authSvc, emailSvc)
 }
 
 func TestSignupHandler_201(t *testing.T) {

@@ -5,15 +5,18 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/zeal/auth/internal/service"
 )
 
 type AuthHandler struct {
-	auth *service.AuthService
+	auth  *service.AuthService
+	email *service.EmailService
 }
 
-func NewAuthHandler(auth *service.AuthService) *AuthHandler {
-	return &AuthHandler{auth: auth}
+func NewAuthHandler(auth *service.AuthService, email *service.EmailService) *AuthHandler {
+	return &AuthHandler{auth: auth, email: email}
 }
 
 type signupRequest struct {
@@ -23,6 +26,15 @@ type signupRequest struct {
 
 type loginRequest struct {
 	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type forgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
+type resetPasswordRequest struct {
+	Token    string `json:"token"`
 	Password string `json:"password"`
 }
 
@@ -58,7 +70,11 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = result // user created, email verification will be handled in plan 1-4
+	// Generate and send verification token
+	if _, err := h.email.GenerateVerificationToken(r.Context(), result.User.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"message": "Account created. Check your email to verify.",
@@ -91,4 +107,75 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"message": "Login successful",
 		"user_id": result.User.ID.String(),
 	})
+}
+
+func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "missing_token")
+		return
+	}
+
+	msg, status, err := h.email.VerifyEmail(r.Context(), token)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidToken):
+			writeError(w, status, "invalid_token")
+		case errors.Is(err, service.ErrTokenExpired):
+			writeError(w, status, "token_expired")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error")
+		}
+		return
+	}
+
+	writeJSON(w, status, map[string]string{"message": msg})
+}
+
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req forgotPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+
+	msg, status, err := h.email.ForgotPassword(r.Context(), req.Email)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+
+	writeJSON(w, status, map[string]string{"message": msg})
+}
+
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var req resetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+
+	msg, status, err := h.email.ResetPassword(r.Context(), req.Token, req.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidToken):
+			writeError(w, status, "invalid_token")
+		case errors.Is(err, service.ErrTokenExpired):
+			writeError(w, status, "token_expired")
+		case errors.Is(err, service.ErrTokenAlreadyUsed):
+			writeError(w, status, "token_already_used")
+		case errors.Is(err, service.ErrPasswordTooShort):
+			writeError(w, status, "password_too_short")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error")
+		}
+		return
+	}
+
+	writeJSON(w, status, map[string]string{"message": msg})
+}
+
+// Helper to parse UUID from query string
+func parseUUID(s string) (uuid.UUID, error) {
+	return uuid.Parse(s)
 }
