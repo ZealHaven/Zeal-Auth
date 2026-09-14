@@ -19,18 +19,20 @@ import (
 
 // OAuth2Handler handles OAuth2/OIDC endpoints.
 type OAuth2Handler struct {
-	oauth  *OAuthHandler
-	pool   *pgxpool.Pool
-	keySvc *service.KeyService
-	config *FositeConfig
+	oauth     *OAuthHandler
+	pool      *pgxpool.Pool
+	keySvc    *service.KeyService
+	config    *FositeConfig
+	sessionSvc *service.SessionService
 }
 
-func NewOAuth2Handler(oauth *OAuthHandler, pool *pgxpool.Pool, keySvc *service.KeyService, cfg *FositeConfig) *OAuth2Handler {
+func NewOAuth2Handler(oauth *OAuthHandler, pool *pgxpool.Pool, keySvc *service.KeyService, cfg *FositeConfig, sessionSvc *service.SessionService) *OAuth2Handler {
 	return &OAuth2Handler{
-		oauth:  oauth,
-		pool:   pool,
-		keySvc: keySvc,
-		config: cfg,
+		oauth:      oauth,
+		pool:       pool,
+		keySvc:     keySvc,
+		config:     cfg,
+		sessionSvc: sessionSvc,
 	}
 }
 
@@ -185,16 +187,13 @@ func (h *OAuth2Handler) JWKS(w http.ResponseWriter, r *http.Request) {
 // ---- /logout ----
 
 func (h *OAuth2Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "sso_session",
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		Domain:   h.config.CookieDomain,
-	})
+	// Delete session from Redis
+	sessionID := service.GetSessionIDFromRequest(r)
+	if sessionID != "" {
+		_ = h.sessionSvc.Delete(r.Context(), sessionID)
+	}
+
+	service.ClearSessionCookie(w, h.config.CookieDomain)
 
 	redirectURI := r.URL.Query().Get("post_logout_redirect_uri")
 	if redirectURI == "" {
@@ -285,23 +284,32 @@ func (s *openidSession) Clone() fosite.Session {
 }
 
 func (h *OAuth2Handler) getSession(r *http.Request) (*SSOSession, bool) {
-	cookie, err := r.Cookie("sso_session")
-	if err != nil || cookie.Value == "" {
+	sessionID := service.GetSessionIDFromRequest(r)
+	if sessionID == "" {
 		return nil, false
 	}
 
-	var userID, email string
+	sess, err := h.sessionSvc.Get(r.Context(), sessionID)
+	if err != nil || sess == nil {
+		return nil, false
+	}
+
+	// Look up user data from DB for the OIDC session
+	var email string
 	var emailVerified bool
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT u.id, u.email, u.email_verified FROM auth.users u
-		 WHERE u.id = (SELECT user_id FROM auth.refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL LIMIT 1)`,
-		cookie.Value,
-	).Scan(&userID, &email, &emailVerified)
+		`SELECT email, email_verified FROM auth.users WHERE id = $1`,
+		sess.UserID,
+	).Scan(&email, &emailVerified)
 	if err != nil {
 		return nil, false
 	}
 
-	return &SSOSession{UserID: userID, Email: email, EmailVerified: emailVerified}, true
+	return &SSOSession{
+		UserID:        sess.UserID,
+		Email:         email,
+		EmailVerified: emailVerified,
+	}, true
 }
 
 func generateState() string {

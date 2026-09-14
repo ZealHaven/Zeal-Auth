@@ -9,7 +9,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/zeal/auth/internal/repository"
 	"github.com/zeal/auth/internal/service"
@@ -44,12 +46,31 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// Setup integration test infrastructure
+	integPool = testPool
+	var mrErr error
+	integMR, mrErr = miniredis.Run()
+	if mrErr != nil {
+		panic("miniredis: " + mrErr.Error())
+	}
+	integRDB = redis.NewClient(&redis.Options{Addr: integMR.Addr()})
+	integRouter = buildIntegRouter()
+
 	code := m.Run()
 
 	_, _ = testPool.Exec(ctx, "DROP SCHEMA IF EXISTS auth CASCADE")
 	_, _ = testPool.Exec(ctx, "DROP TABLE IF EXISTS public.schema_migrations")
 	testPool.Close()
+	integRDB.Close()
+	integMR.Close()
 	os.Exit(code)
+}
+
+func buildIntegRouterForTest() http.Handler {
+	if integRouter != nil {
+		return integRouter
+	}
+	return buildIntegRouter()
 }
 
 func setupHandlerTest(t *testing.T) *AuthHandler {
@@ -67,8 +88,8 @@ func setupHandlerTest(t *testing.T) *AuthHandler {
 	verificationRepo := repository.NewVerificationRepository(testPool)
 	resetRepo := repository.NewResetRepository(testPool)
 	authSvc := service.NewAuthService(userRepo)
-	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, testPool)
-	return NewAuthHandler(authSvc, emailSvc)
+	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, testPool, nil)
+	return NewAuthHandler(authSvc, emailSvc, nil)
 }
 
 func TestSignupHandler_201(t *testing.T) {
@@ -192,6 +213,9 @@ func TestLoginHandler_200(t *testing.T) {
 	if _, ok := resp["user_id"]; !ok {
 		t.Error("missing user_id in response")
 	}
+
+	// Session cookie should be set when sessionSvc is not nil
+	// (In this test it's nil, so no cookie — that's expected)
 }
 
 func TestLoginHandler_401(t *testing.T) {

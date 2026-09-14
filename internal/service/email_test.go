@@ -23,7 +23,7 @@ func setupEmailService(t *testing.T) (*EmailService, *repository.UserRepository)
 	userRepo := repository.NewUserRepository(testPool)
 	verificationRepo := repository.NewVerificationRepository(testPool)
 	resetRepo := repository.NewResetRepository(testPool)
-	emailSvc := NewEmailService(userRepo, verificationRepo, resetRepo, testPool)
+	emailSvc := NewEmailService(userRepo, verificationRepo, resetRepo, testPool, nil)
 	return emailSvc, userRepo
 }
 

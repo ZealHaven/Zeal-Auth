@@ -1,0 +1,40 @@
+{{define "authorize.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Authorize</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="brand"></div>
+        <div class="app-banner">Continue to <strong>{{.ClientName}}</strong></div>
+
+        {{if .Error}}
+        <div class="error">{{.Error}}</div>
+        {{end}}
+
+        <form method="POST" action="/authorize{{if .QueryString}}?{{.QueryString}}{{end}}">
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="you@example.com" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Your password" required>
+            </div>
+            <button type="submit" class="btn-primary">Continue</button>
+        </form>
+
+        <div class="divider">or</div>
+
+        <a href="/oauth/google?return_to={{.ReturnTo}}" style="text-decoration:none">
+            <button type="button" class="btn-social">Continue with Google</button>
+        </a>
+        <a href="/oauth/github?return_to={{.ReturnTo}}" style="text-decoration:none">
+            <button type="button" class="btn-social">Continue with GitHub</button>
+        </a>
+    </div>
+</body>
+</html>
+{{end}}

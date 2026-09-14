@@ -11,12 +11,22 @@ import (
 )
 
 type AuthHandler struct {
-	auth  *service.AuthService
-	email *service.EmailService
+	auth       *service.AuthService
+	email      *service.EmailService
+	sessionSvc *service.SessionService
+	config     *handlerConfig
 }
 
-func NewAuthHandler(auth *service.AuthService, email *service.EmailService) *AuthHandler {
-	return &AuthHandler{auth: auth, email: email}
+type handlerConfig struct {
+	CookieDomain string
+}
+
+func NewAuthHandler(auth *service.AuthService, email *service.EmailService, sessionSvc *service.SessionService) *AuthHandler {
+	return &AuthHandler{auth: auth, email: email, sessionSvc: sessionSvc, config: &handlerConfig{}}
+}
+
+func (h *AuthHandler) SetCookieDomain(domain string) {
+	h.config.CookieDomain = domain
 }
 
 type signupRequest struct {
@@ -103,6 +113,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create session and set cookie
+	if h.sessionSvc != nil {
+		sess, err := h.sessionSvc.Create(r.Context(), result.User.ID.String(), "")
+		if err == nil {
+			service.SetSessionCookie(w, sess.ID, h.config.CookieDomain)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message": "Login successful",
 		"user_id": result.User.ID.String(),
@@ -112,11 +130,34 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
+		if isHTMLRequest(r) {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
 		writeError(w, http.StatusBadRequest, "missing_token")
 		return
 	}
 
 	msg, status, err := h.email.VerifyEmail(r.Context(), token)
+
+	// HTML path
+	if isHTMLRequest(r) {
+		if err != nil {
+			switch {
+			case errors.Is(err, service.ErrTokenExpired):
+				renderTemplate(w, "verify-expired.html", map[string]string{})
+			default:
+				renderTemplate(w, "login.html", map[string]string{
+					"Error": "Invalid verification link",
+				})
+			}
+			return
+		}
+		renderTemplate(w, "verify-success.html", map[string]string{})
+		return
+	}
+
+	// JSON path
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidToken):

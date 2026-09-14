@@ -1,0 +1,24 @@
+{{define "redirect.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Redirecting...</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="success-icon">&#10003;</div>
+        <h1>Redirecting...</h1>
+        <p class="text-center text-muted mb-8">
+            You're being redirected to <strong>{{.ClientName}}</strong>.
+        </p>
+        <script>
+            window.location.href = "{{.RedirectURL}}";
+        </script>
+        <noscript>
+            <a href="{{.RedirectURL}}" class="btn-primary" style="display:block;text-align:center;text-decoration:none;padding:10px;border-radius:8px;">Continue</a>
+        </noscript>
+    </div>
+</body>
+</html>
+{{end}}

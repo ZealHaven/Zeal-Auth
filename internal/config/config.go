@@ -24,7 +24,7 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		DatabaseURL:  getenv("DATABASE_URL", "postgres://auth:auth@localhost:5433/auth?sslmode=disable"),
+		DatabaseURL:  getenv("DATABASE_URL", "postgres://auth:auth@localhost:5435/auth?sslmode=disable"),
 		RedisURL:     getenv("REDIS_URL", "redis://localhost:6379/0"),
 		ServerPort:   getenv("SERVER_PORT", "8080"),
 		CookieDomain: getenv("COOKIE_DOMAIN", "auth.yourdomain.com"),

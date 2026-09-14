@@ -20,17 +20,13 @@ import (
 	"github.com/zeal/auth/internal/service"
 )
 
-func main() {
-	cfg := config.Load()
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+func buildServer(cfg *config.Config) (http.Handler, func()) {
+	ctx := context.Background()
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
-	defer pool.Close()
 
 	if err := service.EnsureInitialKey(ctx, pool, cfg.JWTKID, cfg.KeyEncryptionKey); err != nil {
 		log.Fatalf("ensure initial signing key: %v", err)
@@ -52,17 +48,18 @@ func main() {
 		log.Fatalf("fosite server: %v", err)
 	}
 
-	oauth2Handler := handler.NewOAuth2Handler(oauthHandler, pool, keySvc, fositeCfg)
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisURL})
+	sessionSvc := service.NewSessionService(rdb)
+
+	oauth2Handler := handler.NewOAuth2Handler(oauthHandler, pool, keySvc, fositeCfg, sessionSvc)
 
 	userRepo := repository.NewUserRepository(pool)
 	verificationRepo := repository.NewVerificationRepository(pool)
 	resetRepo := repository.NewResetRepository(pool)
 	federatedRepo := repository.NewFederatedRepository(pool)
 	authSvc := service.NewAuthService(userRepo)
-	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, pool)
+	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, pool, sessionSvc)
 
-	// Federation broker
-	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisURL})
 	googleOAuth := &oauth2.Config{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
@@ -87,16 +84,35 @@ func main() {
 		Google:    googleOAuth,
 		GitHub:    githubOAuth,
 	})
-	brokerHandler := handler.NewBrokerHandler(brokerSvc)
+	brokerHandler := handler.NewBrokerHandler(brokerSvc, sessionSvc)
 
 	router := handler.NewRouter(handler.RouterDeps{
-		Pool:   pool,
-		Auth:   authSvc,
-		Email:  emailSvc,
-		OAuth:  oauthHandler,
-		OAuth2: oauth2Handler,
-		Broker: brokerHandler,
+		Pool:         pool,
+		Auth:         authSvc,
+		Email:        emailSvc,
+		OAuth:        oauthHandler,
+		OAuth2:       oauth2Handler,
+		Broker:       brokerHandler,
+		Session:      sessionSvc,
+		CookieDomain: cfg.CookieDomain,
 	})
+
+	cleanup := func() {
+		rdb.Close()
+		pool.Close()
+	}
+
+	return router, cleanup
+}
+
+func main() {
+	cfg := config.Load()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	router, cleanup := buildServer(cfg)
+	defer cleanup()
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.ServerPort,

@@ -1,0 +1,21 @@
+{{define "verify-expired.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Link Expired</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="success-icon" style="background:rgba(239,68,68,0.15)">&#8987;</div>
+        <h1>This link expired</h1>
+        <p class="text-center text-muted mb-8">
+            The verification link has expired. Request a new one.
+        </p>
+        <a href="/forgot-password" style="text-decoration:none">
+            <button type="button" class="btn-primary">Send new link</button>
+        </a>
+    </div>
+</body>
+</html>
+{{end}}

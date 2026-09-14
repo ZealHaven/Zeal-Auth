@@ -2,11 +2,11 @@
 
 set shell := ["bash", "-uc"]
 
-# Start dev server
+# Start dev server with hot reload on port 5020
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    go run ./cmd/server
+    SERVER_PORT=5020 air
 
 # Build binary
 build:
@@ -54,6 +54,12 @@ test-race:
 # Run integration tests (requires running DB + Redis)
 test-integration:
     go test ./internal/handler/ -run "TestE2E" -v -count=1
+
+# Run E2E tests with Playwright (starts real server, real browser)
+test-e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    npx playwright test
 
 # Generate coverage report
 test-cover:

@@ -1,0 +1,39 @@
+{{define "link-account.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Link Account</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="brand"></div>
+        <h1>An account already exists</h1>
+        <p class="text-center text-muted mb-8">
+            An account with <strong>{{.Email}}</strong> already exists.<br>
+            Log in to link your {{.Provider}} account.
+        </p>
+
+        {{if .Error}}
+        <div class="error">{{.Error}}</div>
+        {{end}}
+
+        <form method="POST" action="/login?link_provider={{.Provider}}&email={{.Email}}">
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{.Email}}" readonly>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Your password" required>
+            </div>
+            <button type="submit" class="btn-primary">Log in &amp; link</button>
+        </form>
+
+        <div class="links">
+            <a href="/signup">Create a new account instead</a>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

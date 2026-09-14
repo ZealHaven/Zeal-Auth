@@ -25,6 +25,7 @@ type EmailService struct {
 	verification *repository.VerificationRepository
 	reset        *repository.ResetRepository
 	pool         *pgxpool.Pool
+	sessionSvc   *SessionService
 }
 
 func NewEmailService(
@@ -32,12 +33,14 @@ func NewEmailService(
 	verification *repository.VerificationRepository,
 	reset *repository.ResetRepository,
 	pool *pgxpool.Pool,
+	sessionSvc *SessionService,
 ) *EmailService {
 	return &EmailService{
 		users:        users,
 		verification: verification,
 		reset:        reset,
 		pool:         pool,
+		sessionSvc:   sessionSvc,
 	}
 }
 
@@ -164,6 +167,11 @@ func (s *EmailService) ResetPassword(ctx context.Context, token, newPassword str
 
 	if err := s.reset.MarkUsed(ctx, rt.ID); err != nil {
 		return "", 500, err
+	}
+
+	// Delete all sessions for this user (AC-SESSION-4)
+	if s.sessionSvc != nil {
+		_ = s.sessionSvc.DeleteAllForUser(ctx, rt.UserID.String())
 	}
 
 	return "Password updated successfully", 200, nil

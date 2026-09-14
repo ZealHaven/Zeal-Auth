@@ -9,11 +9,12 @@ import (
 )
 
 type BrokerHandler struct {
-	broker *service.BrokerService
+	broker     *service.BrokerService
+	sessionSvc *service.SessionService
 }
 
-func NewBrokerHandler(broker *service.BrokerService) *BrokerHandler {
-	return &BrokerHandler{broker: broker}
+func NewBrokerHandler(broker *service.BrokerService, sessionSvc *service.SessionService) *BrokerHandler {
+	return &BrokerHandler{broker: broker, sessionSvc: sessionSvc}
 }
 
 func (h *BrokerHandler) GoogleInitiate(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +75,14 @@ func (h *BrokerHandler) callback(w http.ResponseWriter, r *http.Request, provide
 		return
 	}
 
-	// Success: write JSON response for API callers, or set session cookie
+	// Success: set session cookie and return JSON
+	if h.sessionSvc != nil {
+		sess, err := h.sessionSvc.Create(r.Context(), result.User.ID.String(), "")
+		if err == nil {
+			service.SetSessionCookie(w, sess.ID, "")
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"message": "Login successful",

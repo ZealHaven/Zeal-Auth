@@ -1,0 +1,21 @@
+{{define "check-email.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Check Your Email</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="success-icon">&#9993;</div>
+        <h1>Check your inbox</h1>
+        <p class="text-center text-muted mb-8">
+            We sent a verification link to<br><strong>{{.Email}}</strong>
+        </p>
+        <p class="text-center text-muted">
+            Click the link in the email to verify your account.
+        </p>
+    </div>
+</body>
+</html>
+{{end}}

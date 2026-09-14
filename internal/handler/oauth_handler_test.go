@@ -84,13 +84,13 @@ func TestLogout_ClearsSession(t *testing.T) {
 	cookies := w.Result().Cookies()
 	var ssoCookie *http.Cookie
 	for _, c := range cookies {
-		if c.Name == "sso_session" {
+		if c.Name == "sid" {
 			ssoCookie = c
 			break
 		}
 	}
 	if ssoCookie == nil {
-		t.Fatal("sso_session cookie not set")
+		t.Fatal("sid cookie not set")
 	}
 	if ssoCookie.MaxAge != -1 {
 		t.Errorf("MaxAge = %d, want -1", ssoCookie.MaxAge)

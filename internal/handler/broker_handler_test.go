@@ -71,7 +71,7 @@ func setupBrokerHandlerTest(t *testing.T) (*BrokerHandler, *miniredis.Miniredis)
 		GoogleUserInfoURL: gs.URL + "/userinfo",
 	})
 
-	return NewBrokerHandler(brokerSvc), mr
+	return NewBrokerHandler(brokerSvc, nil), mr
 }
 
 func TestGoogleInitiate_RedirectsToGoogle(t *testing.T) {
