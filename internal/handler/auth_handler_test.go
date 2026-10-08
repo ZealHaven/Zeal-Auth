@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/zeal/auth/internal/db"
 	"github.com/zeal/auth/internal/repository"
 	"github.com/zeal/auth/internal/service"
 )
@@ -20,14 +21,14 @@ import (
 var testPool *pgxpool.Pool
 
 func testDBURL() string {
-	if url := os.Getenv("DATABASE_URL"); url != "" {
-		return url
-	}
-	return "postgres://auth:auth@localhost:5435/auth?sslmode=disable"
+	return db.TestURL()
 }
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+	if err := db.EnsureTestDatabase(ctx); err != nil {
+		panic("ensure test database: " + err.Error())
+	}
 	var err error
 	testPool, err = pgxpool.New(ctx, testDBURL())
 	if err != nil {
@@ -38,11 +39,12 @@ func TestMain(m *testing.M) {
 	_, _ = testPool.Exec(ctx, "DROP SCHEMA IF EXISTS auth CASCADE")
 	_, _ = testPool.Exec(ctx, "DROP TABLE IF EXISTS public.schema_migrations")
 	_, _ = testPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS auth")
-	out, _ := os.ReadFile("../../migrations/000001_init.up.sql")
-	if out != nil {
-		_, err = testPool.Exec(ctx, string(out))
-		if err != nil {
-			panic("run migration: " + err.Error())
+	for _, f := range []string{"../../migrations/000001_init.up.sql", "../../migrations/000002_oauth2_storage.up.sql"} {
+		out, _ := os.ReadFile(f)
+		if out != nil {
+			if _, err = testPool.Exec(ctx, string(out)); err != nil {
+				panic("run migration " + f + ": " + err.Error())
+			}
 		}
 	}
 
@@ -88,7 +90,7 @@ func setupHandlerTest(t *testing.T) *AuthHandler {
 	verificationRepo := repository.NewVerificationRepository(testPool)
 	resetRepo := repository.NewResetRepository(testPool)
 	authSvc := service.NewAuthService(userRepo)
-	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, testPool, nil)
+	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, testPool, nil, nil, "http://localhost:8080")
 	return NewAuthHandler(authSvc, emailSvc, nil)
 }
 

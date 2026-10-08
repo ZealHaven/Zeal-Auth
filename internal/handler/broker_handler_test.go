@@ -94,21 +94,19 @@ func TestGoogleInitiate_RedirectsToGoogle(t *testing.T) {
 func TestGoogleCallback_Success(t *testing.T) {
 	h, mr := setupBrokerHandlerTest(t)
 
-	mr.Set("oauth:state:good-state", "/")
+	mr.Set("oauth:state:good-state", "/dashboard")
 
 	req := httptest.NewRequest("GET", "/oauth/google/callback?code=test-code&state=good-state", nil)
 	w := httptest.NewRecorder()
 
 	h.GoogleCallback(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	// Success must redirect to returnTo (not return JSON)
+	if w.Code != http.StatusFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusFound)
 	}
-
-	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
-	if resp["message"] != "Login successful" {
-		t.Errorf("message = %q", resp["message"])
+	if loc := w.Header().Get("Location"); loc != "/dashboard" {
+		t.Errorf("Location = %q, want /dashboard", loc)
 	}
 }
 

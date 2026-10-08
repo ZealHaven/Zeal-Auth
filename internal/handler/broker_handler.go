@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 
 	"github.com/zeal/auth/internal/service"
 )
@@ -71,21 +71,30 @@ func (h *BrokerHandler) callback(w http.ResponseWriter, r *http.Request, provide
 	}
 
 	if result.LinkRequired {
-		http.Redirect(w, r, "/link-account?provider="+result.LinkProvider+"&email="+result.LinkEmail, http.StatusTemporaryRedirect)
+		token, err := h.broker.BeginLink(r.Context(), result.LinkProvider, result.LinkProviderUserID, result.LinkEmail, result.ReturnTo)
+		if err != nil {
+			http.Redirect(w, r, "/login?error=internal_error", http.StatusTemporaryRedirect)
+			return
+		}
+		http.Redirect(w, r,
+			"/link-account?token="+url.QueryEscape(token)+"&provider="+url.QueryEscape(result.LinkProvider)+"&email="+url.QueryEscape(result.LinkEmail),
+			http.StatusTemporaryRedirect)
 		return
 	}
 
-	// Success: set session cookie and return JSON
+	// Success: set session cookie and redirect back to the originating app
 	if h.sessionSvc != nil {
 		sess, err := h.sessionSvc.Create(r.Context(), result.User.ID.String(), "")
-		if err == nil {
-			service.SetSessionCookie(w, sess.ID, "")
+		if err != nil {
+			http.Redirect(w, r, "/login?error=internal_error", http.StatusTemporaryRedirect)
+			return
 		}
+		service.SetSessionCookie(w, sess.ID, "")
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"message": "Login successful",
-		"user_id": result.User.ID.String(),
-	})
+	returnTo := result.ReturnTo
+	if returnTo == "" {
+		returnTo = "/"
+	}
+	http.Redirect(w, r, returnTo, http.StatusFound)
 }

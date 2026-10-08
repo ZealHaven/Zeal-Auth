@@ -9,19 +9,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/ory/fosite"
+
+	"github.com/zeal/auth/internal/db"
 )
 
 var testPool *pgxpool.Pool
 
 func testDBURL() string {
-	if url := os.Getenv("DATABASE_URL"); url != "" {
-		return url
-	}
-	return "postgres://auth:auth@localhost:5435/auth?sslmode=disable"
+	return db.TestURL()
 }
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+	if err := db.EnsureTestDatabase(ctx); err != nil {
+		panic("ensure test database: " + err.Error())
+	}
 	var err error
 	testPool, err = pgxpool.New(ctx, testDBURL())
 	if err != nil {
@@ -260,12 +262,17 @@ func TestFositeStorage_OpenIDConnectSession(t *testing.T) {
 		t.Fatalf("CreateOpenIDConnectSession: %v", err)
 	}
 
-	got, err := store.GetOpenIDConnectSession(ctx, code, nil)
+	// fosite hydrates into the caller's session (never passes nil requester)
+	target := &fosite.Request{Session: &fosite.DefaultSession{}}
+	got, err := store.GetOpenIDConnectSession(ctx, code, target)
 	if err != nil {
 		t.Fatalf("GetOpenIDConnectSession: %v", err)
 	}
 	if got.GetID() != req.ID {
 		t.Errorf("ID mismatch")
+	}
+	if got.GetSession() == nil || got.GetSession().GetSubject() != "user-1" {
+		t.Errorf("session not hydrated into target request")
 	}
 
 	err = store.DeleteOpenIDConnectSession(ctx, code)

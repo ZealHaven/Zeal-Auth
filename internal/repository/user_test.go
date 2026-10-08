@@ -8,19 +8,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/zeal/auth/internal/db"
 )
 
 var testPool *pgxpool.Pool
 
 func testDBURL() string {
-	if url := os.Getenv("DATABASE_URL"); url != "" {
-		return url
-	}
-	return "postgres://auth:auth@localhost:5435/auth?sslmode=disable"
+	return db.TestURL()
 }
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+	if err := db.EnsureTestDatabase(ctx); err != nil {
+		panic("ensure test database: " + err.Error())
+	}
 	var err error
 	testPool, err = pgxpool.New(ctx, testDBURL())
 	if err != nil {

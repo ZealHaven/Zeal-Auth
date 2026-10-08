@@ -17,7 +17,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.ServerPort != "8080" {
 		t.Errorf("default ServerPort = %q, want %q", cfg.ServerPort, "8080")
 	}
-	if cfg.DatabaseURL != "postgres://auth:auth@localhost:5433/auth?sslmode=disable" {
+	if cfg.DatabaseURL != "postgres://auth:auth@localhost:5435/auth?sslmode=disable" {
 		t.Errorf("default DatabaseURL = %q, want default postgres URL", cfg.DatabaseURL)
 	}
 	if cfg.RedisURL != "redis://localhost:6379/0" {

@@ -105,6 +105,7 @@ func TestE2E_Client_Create_SecretShownOnce(t *testing.T) {
 		"redirect_uris": ["http://localhost/callback"]
 	}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "test-admin-token")
 	w := httptest.NewRecorder()
 	integRouter.ServeHTTP(w, req)
 

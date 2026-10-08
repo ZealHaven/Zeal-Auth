@@ -14,13 +14,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zeal/auth/internal/db"
 )
 
 func testDBURL() string {
-	if url := os.Getenv("DATABASE_URL"); url != "" {
-		return url
-	}
-	return "postgres://auth:auth@localhost:5435/auth?sslmode=disable"
+	return db.TestURL()
 }
 
 const testEncKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -29,6 +28,9 @@ var testPool *pgxpool.Pool
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+	if err := db.EnsureTestDatabase(ctx); err != nil {
+		panic("ensure test database: " + err.Error())
+	}
 	var err error
 	testPool, err = pgxpool.New(ctx, testDBURL())
 	if err != nil {
@@ -40,12 +42,13 @@ func TestMain(m *testing.M) {
 	_, _ = testPool.Exec(ctx, "DROP TABLE IF EXISTS public.schema_migrations")
 	// ensure schema exists
 	_, _ = testPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS auth")
-	// run migrations up via the SQL file
-	out, _ := os.ReadFile("../../migrations/000001_init.up.sql")
-	if out != nil {
-		_, err = testPool.Exec(ctx, string(out))
-		if err != nil {
-			panic("run migration: " + err.Error())
+	// run migrations up via the SQL files
+	for _, f := range []string{"../../migrations/000001_init.up.sql", "../../migrations/000002_oauth2_storage.up.sql"} {
+		out, _ := os.ReadFile(f)
+		if out != nil {
+			if _, err = testPool.Exec(ctx, string(out)); err != nil {
+				panic("run migration " + f + ": " + err.Error())
+			}
 		}
 	}
 

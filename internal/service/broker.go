@@ -24,16 +24,18 @@ var (
 	ErrInvalidState      = errors.New("invalid_state")
 	ErrAccountLinkNeeded = errors.New("account_link_needed")
 	ErrIdPError          = errors.New("idp_error")
+	ErrInvalidLinkToken  = errors.New("invalid_link_token")
+	ErrLinkEmailMismatch = errors.New("link_email_mismatch")
 )
 
 const stateTTL = 10 * time.Minute
 
 type BrokerService struct {
-	users     *repository.UserRepository
-	federated *repository.FederatedRepository
-	rdb       *redis.Client
-	google    *oauth2.Config
-	github    *oauth2.Config
+	users      *repository.UserRepository
+	federated  *repository.FederatedRepository
+	rdb        *redis.Client
+	google     *oauth2.Config
+	github     *oauth2.Config
 	httpClient *http.Client
 	// Override URLs for testing
 	googleUserInfoURL string
@@ -42,11 +44,11 @@ type BrokerService struct {
 }
 
 type BrokerDeps struct {
-	Users     *repository.UserRepository
-	Federated *repository.FederatedRepository
-	RDB       *redis.Client
-	Google    *oauth2.Config
-	GitHub    *oauth2.Config
+	Users      *repository.UserRepository
+	Federated  *repository.FederatedRepository
+	RDB        *redis.Client
+	Google     *oauth2.Config
+	GitHub     *oauth2.Config
 	HTTPClient *http.Client
 	// Override URLs for testing (empty = production URLs)
 	GoogleUserInfoURL string
@@ -60,24 +62,26 @@ func NewBrokerService(deps BrokerDeps) *BrokerService {
 		hc = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &BrokerService{
-		users:            deps.Users,
-		federated:        deps.Federated,
-		rdb:              deps.RDB,
-		google:           deps.Google,
-		github:           deps.GitHub,
-		httpClient:       hc,
+		users:             deps.Users,
+		federated:         deps.Federated,
+		rdb:               deps.RDB,
+		google:            deps.Google,
+		github:            deps.GitHub,
+		httpClient:        hc,
 		googleUserInfoURL: deps.GoogleUserInfoURL,
-		githubUserURL:    deps.GithubUserURL,
-		githubEmailsURL:  deps.GithubEmailsURL,
+		githubUserURL:     deps.GithubUserURL,
+		githubEmailsURL:   deps.GithubEmailsURL,
 	}
 }
 
 // BrokerResult signals the outcome of HandleCallback.
 type BrokerResult struct {
-	User            *model.User
-	LinkRequired    bool
-	LinkProvider    string
-	LinkEmail       string
+	User               *model.User
+	ReturnTo           string
+	LinkRequired       bool
+	LinkProvider       string
+	LinkEmail          string
+	LinkProviderUserID string
 }
 
 func (s *BrokerService) oauthConfig(provider string) (*oauth2.Config, error) {
@@ -153,8 +157,7 @@ func (s *BrokerService) HandleCallback(ctx context.Context, provider, code, stat
 		if err != nil {
 			return nil, err
 		}
-		_ = returnTo // TODO: use in redirect
-		return &BrokerResult{User: user}, nil
+		return &BrokerResult{User: user, ReturnTo: returnTo}, nil
 	}
 	if !errors.Is(err, repository.ErrFederatedIdentityNotFound) {
 		return nil, err
@@ -165,9 +168,11 @@ func (s *BrokerService) HandleCallback(ctx context.Context, provider, code, stat
 	if err == nil {
 		// Existing user, no link for this provider → link required
 		return &BrokerResult{
-			LinkRequired: true,
-			LinkProvider: provider,
-			LinkEmail:    profile.Email,
+			LinkRequired:       true,
+			LinkProvider:       provider,
+			LinkEmail:          profile.Email,
+			LinkProviderUserID: profile.ProviderUserID,
+			ReturnTo:           returnTo,
 		}, nil
 	}
 	if !errors.Is(err, repository.ErrUserNotFound) {
@@ -184,8 +189,58 @@ func (s *BrokerService) HandleCallback(ctx context.Context, provider, code, stat
 		return nil, err
 	}
 
-	_ = returnTo
-	return &BrokerResult{User: user}, nil
+	return &BrokerResult{User: user, ReturnTo: returnTo}, nil
+}
+
+type pendingLink struct {
+	Provider       string `json:"provider"`
+	ProviderUserID string `json:"provider_user_id"`
+	Email          string `json:"email"`
+	ReturnTo       string `json:"return_to"`
+}
+
+// BeginLink stashes a not-yet-linked provider identity so the link-account
+// form can complete it after password re-authentication.
+func (s *BrokerService) BeginLink(ctx context.Context, provider, providerUserID, email, returnTo string) (string, error) {
+	token, err := GenerateToken()
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(pendingLink{
+		Provider:       provider,
+		ProviderUserID: providerUserID,
+		Email:          email,
+		ReturnTo:       returnTo,
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := s.rdb.Set(ctx, "oauth:pending:"+token, data, stateTTL).Err(); err != nil {
+		return "", fmt.Errorf("store pending link: %w", err)
+	}
+	return token, nil
+}
+
+// CompleteLink verifies password-login identity matches the pending link,
+// links the provider identity, and returns the original returnTo.
+func (s *BrokerService) CompleteLink(ctx context.Context, token string, user *model.User) (string, error) {
+	data, err := s.rdb.Get(ctx, "oauth:pending:"+token).Result()
+	if err != nil {
+		return "", ErrInvalidLinkToken
+	}
+	s.rdb.Del(ctx, "oauth:pending:"+token)
+
+	var p pendingLink
+	if err := json.Unmarshal([]byte(data), &p); err != nil {
+		return "", ErrInvalidLinkToken
+	}
+	if !strings.EqualFold(user.Email, p.Email) {
+		return "", ErrLinkEmailMismatch
+	}
+	if err := s.federated.Link(ctx, user.ID, p.Provider, p.ProviderUserID, p.Email); err != nil {
+		return "", err
+	}
+	return p.ReturnTo, nil
 }
 
 // LinkIdentity links a provider identity to an existing user after authentication.
@@ -194,10 +249,10 @@ func (s *BrokerService) LinkIdentity(ctx context.Context, userID uuid.UUID, prov
 }
 
 type normalizedProfile struct {
-	Email           string
-	ProviderUserID  string
-	Name            string
-	EmailVerified   bool
+	Email          string
+	ProviderUserID string
+	Name           string
+	EmailVerified  bool
 }
 
 func (s *BrokerService) fetchProfile(ctx context.Context, provider string, token *oauth2.Token) (*normalizedProfile, error) {
@@ -234,10 +289,10 @@ func (s *BrokerService) fetchGoogleProfile(ctx context.Context, token *oauth2.To
 	}
 
 	var data struct {
-		ID      string `json:"id"`
-		Email   string `json:"email"`
-		Name    string `json:"name"`
-		Verified bool  `json:"verified_email"`
+		ID       string `json:"id"`
+		Email    string `json:"email"`
+		Name     string `json:"name"`
+		Verified bool   `json:"verified_email"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err

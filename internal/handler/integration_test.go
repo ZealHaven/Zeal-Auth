@@ -30,6 +30,7 @@ func buildIntegRouter() http.Handler {
 
 	fositeCfg := DefaultFositeConfig("https://auth.test.com", "test.com")
 	fositeCfg.GlobalSecret = []byte("integration-test-secret-32-bytes-long!!!")
+	fositeCfg.AdminToken = "test-admin-token"
 	fositeCfg.EnforcePKCE = true
 
 	oauthHandler, err := NewFositeServer(integPool, keySvc, fositeCfg)
@@ -46,7 +47,7 @@ func buildIntegRouter() http.Handler {
 	resetRepo := repository.NewResetRepository(integPool)
 	federatedRepo := repository.NewFederatedRepository(integPool)
 	authSvc := service.NewAuthService(userRepo)
-	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, integPool, sessionSvc)
+	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, integPool, sessionSvc, nil, "https://auth.test.com")
 
 	brokerSvc := service.NewBrokerService(service.BrokerDeps{
 		Users:     userRepo,
@@ -93,12 +94,16 @@ func integRequest(method, path string, body interface{}) *httptest.ResponseRecor
 	return w
 }
 
-func cleanIntegDB(t interface{ Context() context.Context; Helper() }) {
+func cleanIntegDB(t interface {
+	Context() context.Context
+	Helper()
+}) {
 	t.Helper()
 	ctx := context.Background()
 	tables := []string{
 		"federated_identities", "refresh_tokens", "email_verification_tokens",
 		"password_reset_tokens", "clients", "client_redirect_uris", "users", "signing_keys",
+		"fosite_requests", "access_tokens", "client_assertions",
 	}
 	for _, table := range tables {
 		_, _ = integPool.Exec(ctx, fmt.Sprintf("DELETE FROM auth.%s", table))

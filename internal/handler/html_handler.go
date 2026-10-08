@@ -115,19 +115,50 @@ func (h *AuthHandler) LoginForm(w http.ResponseWriter, r *http.Request) {
 			errMsg = "Something went wrong. Please try again."
 		}
 		renderTemplate(w, "login.html", map[string]string{
-			"Email":     email,
-			"Error":     errMsg,
+			"Email":    email,
+			"Error":    errMsg,
 			"ReturnTo": returnTo,
 		})
 		return
 	}
 
+	// Complete pending social-account link before issuing a session
+	if token := r.FormValue("link_token"); token != "" {
+		if h.broker == nil {
+			renderTemplate(w, "login.html", map[string]string{
+				"Email": email, "Error": "Something went wrong. Please try again.", "ReturnTo": returnTo,
+			})
+			return
+		}
+		linkTo, err := h.broker.CompleteLink(r.Context(), token, result.User)
+		if err != nil {
+			msg := "Could not link account. Please try signing in with the provider again."
+			if errors.Is(err, service.ErrLinkEmailMismatch) {
+				msg = "This password belongs to a different email address."
+			}
+			renderTemplate(w, "link-account.html", map[string]string{
+				"Provider": r.FormValue("provider"),
+				"Email":    email,
+				"Token":    token,
+				"Error":    msg,
+			})
+			return
+		}
+		returnTo = linkTo
+	}
+
 	// Create session and set cookie
 	if h.sessionSvc != nil {
 		sess, err := h.sessionSvc.Create(r.Context(), result.User.ID.String(), "")
-		if err == nil {
-			service.SetSessionCookie(w, sess.ID, h.config.CookieDomain)
+		if err != nil {
+			renderTemplate(w, "login.html", map[string]string{
+				"Email":    email,
+				"Error":    "Something went wrong. Please try again.",
+				"ReturnTo": returnTo,
+			})
+			return
 		}
+		service.SetSessionCookie(w, sess.ID, h.config.CookieDomain)
 	}
 
 	if returnTo != "" {

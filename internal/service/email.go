@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +25,8 @@ type EmailService struct {
 	reset        *repository.ResetRepository
 	pool         *pgxpool.Pool
 	sessionSvc   *SessionService
+	mailer       Mailer
+	publicURL    string // absolute base URL for links in emails
 }
 
 func NewEmailService(
@@ -34,13 +35,20 @@ func NewEmailService(
 	reset *repository.ResetRepository,
 	pool *pgxpool.Pool,
 	sessionSvc *SessionService,
+	mailer Mailer,
+	publicURL string,
 ) *EmailService {
+	if mailer == nil {
+		mailer = LogMailer{}
+	}
 	return &EmailService{
 		users:        users,
 		verification: verification,
 		reset:        reset,
 		pool:         pool,
 		sessionSvc:   sessionSvc,
+		mailer:       mailer,
+		publicURL:    publicURL,
 	}
 }
 
@@ -58,7 +66,15 @@ func (s *EmailService) GenerateVerificationToken(ctx context.Context, userID uui
 		return "", fmt.Errorf("store verification token: %w", err)
 	}
 
-	log.Printf("[EMAIL] Verification URL: GET /verify?token=%s", raw)
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("get user for verification email: %w", err)
+	}
+	link := fmt.Sprintf("%s/verify?token=%s", s.publicURL, raw)
+	if err := s.mailer.Send(ctx, user.Email, "Verify your email",
+		"Confirm your email address by opening this link:\n\n"+link+"\n\nThis link expires in 24 hours."); err != nil {
+		return "", fmt.Errorf("send verification email: %w", err)
+	}
 	return raw, nil
 }
 
@@ -115,7 +131,11 @@ func (s *EmailService) ForgotPassword(ctx context.Context, email string) (string
 		return "", 500, fmt.Errorf("store reset token: %w", err)
 	}
 
-	log.Printf("[EMAIL] Password reset URL: POST /reset-password token=%s", raw)
+	link := fmt.Sprintf("%s/reset-password?token=%s", s.publicURL, raw)
+	if err := s.mailer.Send(ctx, user.Email, "Reset your password",
+		"Set a new password by opening this link:\n\n"+link+"\n\nThis link expires in 60 minutes."); err != nil {
+		return "", 500, fmt.Errorf("send reset email: %w", err)
+	}
 	return standardMsg, 200, nil
 }
 
@@ -163,6 +183,18 @@ func (s *EmailService) ResetPassword(ctx context.Context, token, newPassword str
 	)
 	if err != nil {
 		return "", 500, fmt.Errorf("revoke refresh tokens: %w", err)
+	}
+
+	// Fosite-issued tokens live in fosite_requests keyed by session subject —
+	// deleting them invalidates access + refresh tokens (AC-RESET-3)
+	_, err = s.pool.Exec(ctx,
+		`DELETE FROM auth.fosite_requests
+		 WHERE (key LIKE 'refreshtoken:%' OR key LIKE 'accesstoken:%')
+		   AND data->'session_data'->>'subject' = $1`,
+		rt.UserID.String(),
+	)
+	if err != nil {
+		return "", 500, fmt.Errorf("revoke fosite tokens: %w", err)
 	}
 
 	if err := s.reset.MarkUsed(ctx, rt.ID); err != nil {

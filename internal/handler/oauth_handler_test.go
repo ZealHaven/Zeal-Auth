@@ -130,15 +130,37 @@ func TestLogout_PostLogoutRedirect(t *testing.T) {
 }
 
 func TestCreateClient_MissingFields(t *testing.T) {
-	h := &OAuth2Handler{}
+	h := &OAuth2Handler{config: &FositeConfig{AdminToken: "test-admin"}}
 
 	body := `{"id":"test"}`
 	req := httptest.NewRequest("POST", "/admin/clients", strings.NewReader(body))
+	req.Header.Set("X-Admin-Token", "test-admin")
 	w := httptest.NewRecorder()
 	h.CreateClient(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestCreateClient_Unauthorized(t *testing.T) {
+	// Wrong token
+	h := &OAuth2Handler{config: &FositeConfig{AdminToken: "test-admin"}}
+	req := httptest.NewRequest("POST", "/admin/clients", strings.NewReader(`{}`))
+	req.Header.Set("X-Admin-Token", "wrong")
+	w := httptest.NewRecorder()
+	h.CreateClient(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("wrong token: status = %d, want 401", w.Code)
+	}
+
+	// No token configured → admin API disabled, even with matching empty header
+	h = &OAuth2Handler{config: &FositeConfig{}}
+	req = httptest.NewRequest("POST", "/admin/clients", strings.NewReader(`{}`))
+	w = httptest.NewRecorder()
+	h.CreateClient(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("no admin token configured: status = %d, want 401", w.Code)
 	}
 }
 

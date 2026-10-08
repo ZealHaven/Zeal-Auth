@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,17 +39,41 @@ func buildServer(cfg *config.Config) (http.Handler, func()) {
 		"https://"+cfg.CookieDomain,
 		cfg.CookieDomain,
 	)
-	fositeCfg.GlobalSecret = []byte(os.Getenv("FOSITE_GLOBAL_SECRET"))
-	if len(fositeCfg.GlobalSecret) < 32 {
-		fositeCfg.GlobalSecret = []byte("fosite-dev-secret-replace-in-prod-32bytes!!")
+	fositeCfg.AdminToken = cfg.AdminToken
+
+	globalSecret := os.Getenv("FOSITE_GLOBAL_SECRET")
+	if cfg.Env == "prod" {
+		// Fail fast: no dev fallbacks in prod
+		if len(globalSecret) < 32 {
+			log.Fatalf("FOSITE_GLOBAL_SECRET must be set to at least 32 bytes in prod")
+		}
+		if len(cfg.KeyEncryptionKey) != 64 {
+			log.Fatalf("KEY_ENCRYPTION_KEY must be 64 hex chars (32 bytes) in prod")
+		}
+		if cfg.AdminToken == "" {
+			log.Fatalf("ADMIN_TOKEN must be set in prod (client registry would be disabled)")
+		}
 	}
+	if len(globalSecret) < 32 {
+		globalSecret = "fosite-dev-secret-replace-in-prod-32bytes!!"
+	}
+	fositeCfg.GlobalSecret = []byte(globalSecret)
 
 	oauthHandler, err := handler.NewFositeServer(pool, keySvc, fositeCfg)
 	if err != nil {
 		log.Fatalf("fosite server: %v", err)
 	}
 
-	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisURL})
+	// go-redis needs a URL with scheme; bare host:port also accepted
+	redisURL := cfg.RedisURL
+	if !strings.Contains(redisURL, "://") {
+		redisURL = "redis://" + redisURL
+	}
+	redisOpts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Fatalf("redis url: %v", err)
+	}
+	rdb := redis.NewClient(redisOpts)
 	sessionSvc := service.NewSessionService(rdb)
 
 	oauth2Handler := handler.NewOAuth2Handler(oauthHandler, pool, keySvc, fositeCfg, sessionSvc)
@@ -58,7 +83,28 @@ func buildServer(cfg *config.Config) (http.Handler, func()) {
 	resetRepo := repository.NewResetRepository(pool)
 	federatedRepo := repository.NewFederatedRepository(pool)
 	authSvc := service.NewAuthService(userRepo)
-	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, pool, sessionSvc)
+
+	var mailer service.Mailer = service.LogMailer{}
+	if cfg.EmailDriver == "smtp" {
+		if cfg.SMTPHost == "" {
+			log.Fatalf("EMAIL_DRIVER=smtp requires SMTP_HOST")
+		}
+		if cfg.EmailFrom == "" {
+			log.Fatalf("EMAIL_DRIVER=smtp requires EMAIL_FROM")
+		}
+		mailer = service.SMTPMailer{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			User:     cfg.SMTPUser,
+			Password: cfg.SMTPPass,
+			From:     cfg.EmailFrom,
+		}
+	}
+	publicURL := cfg.PublicURL
+	if publicURL == "" {
+		publicURL = "https://" + cfg.CookieDomain
+	}
+	emailSvc := service.NewEmailService(userRepo, verificationRepo, resetRepo, pool, sessionSvc, mailer, publicURL)
 
 	googleOAuth := &oauth2.Config{
 		ClientID:     cfg.GoogleClientID,
@@ -87,14 +133,15 @@ func buildServer(cfg *config.Config) (http.Handler, func()) {
 	brokerHandler := handler.NewBrokerHandler(brokerSvc, sessionSvc)
 
 	router := handler.NewRouter(handler.RouterDeps{
-		Pool:         pool,
-		Auth:         authSvc,
-		Email:        emailSvc,
-		OAuth:        oauthHandler,
-		OAuth2:       oauth2Handler,
-		Broker:       brokerHandler,
-		Session:      sessionSvc,
-		CookieDomain: cfg.CookieDomain,
+		Pool:          pool,
+		Auth:          authSvc,
+		Email:         emailSvc,
+		OAuth:         oauthHandler,
+		OAuth2:        oauth2Handler,
+		Broker:        brokerHandler,
+		BrokerService: brokerSvc,
+		Session:       sessionSvc,
+		CookieDomain:  cfg.CookieDomain,
 	})
 
 	cleanup := func() {

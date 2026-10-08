@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -365,4 +366,49 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestBroker_BeginCompleteLink(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := setupBrokerService(t, nil, nil)
+
+	user, err := svc.federated.CreateUserWithoutPassword(ctx, "linkme@test.dev")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	other, err := svc.federated.CreateUserWithoutPassword(ctx, "other@test.dev")
+	if err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+
+	token, err := svc.BeginLink(ctx, "google", "g-123", "linkme@test.dev", "/after-link")
+	if err != nil {
+		t.Fatalf("BeginLink: %v", err)
+	}
+
+	// Wrong account must not link
+	if _, err := svc.CompleteLink(ctx, token, other); !errors.Is(err, ErrLinkEmailMismatch) {
+		t.Fatalf("CompleteLink(wrong user): err = %v, want ErrLinkEmailMismatch", err)
+	}
+
+	// Token must survive a failed mismatch attempt only once — it was consumed; new one
+	token, err = svc.BeginLink(ctx, "google", "g-123", "linkme@test.dev", "/after-link")
+	if err != nil {
+		t.Fatalf("BeginLink 2: %v", err)
+	}
+	returnTo, err := svc.CompleteLink(ctx, token, user)
+	if err != nil {
+		t.Fatalf("CompleteLink: %v", err)
+	}
+	if returnTo != "/after-link" {
+		t.Errorf("returnTo = %q, want /after-link", returnTo)
+	}
+	if _, err := svc.federated.FindByIdentity(ctx, "google", "g-123"); err != nil {
+		t.Errorf("identity not linked: %v", err)
+	}
+
+	// Single use
+	if _, err := svc.CompleteLink(ctx, token, user); !errors.Is(err, ErrInvalidLinkToken) {
+		t.Errorf("reuse: err = %v, want ErrInvalidLinkToken", err)
+	}
 }

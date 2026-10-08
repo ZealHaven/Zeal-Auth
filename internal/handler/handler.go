@@ -9,14 +9,15 @@ import (
 )
 
 type RouterDeps struct {
-	Pool         *pgxpool.Pool
-	Auth         *service.AuthService
-	Email        *service.EmailService
-	OAuth        *OAuthHandler
-	OAuth2       *OAuth2Handler
-	Broker       *BrokerHandler
-	Session      *service.SessionService
-	CookieDomain string
+	Pool          *pgxpool.Pool
+	Auth          *service.AuthService
+	Email         *service.EmailService
+	OAuth         *OAuthHandler
+	OAuth2        *OAuth2Handler
+	Broker        *BrokerHandler
+	BrokerService *service.BrokerService
+	Session       *service.SessionService
+	CookieDomain  string
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
@@ -42,6 +43,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// Existing auth routes
 	ah := NewAuthHandler(deps.Auth, deps.Email, deps.Session)
 	ah.SetCookieDomain(deps.CookieDomain)
+	ah.SetBroker(deps.BrokerService)
 	mux.HandleFunc("POST /signup", ah.Signup)
 	mux.HandleFunc("POST /login", ah.Login)
 	mux.HandleFunc("GET /verify", ah.VerifyEmail)
@@ -58,6 +60,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 		renderTemplate(w, "link-account.html", map[string]string{
 			"Provider": r.URL.Query().Get("provider"),
 			"Email":    r.URL.Query().Get("email"),
+			"Token":    r.URL.Query().Get("token"),
+			"Error":    r.URL.Query().Get("error"),
 		})
 	})
 
@@ -75,6 +79,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("GET /.well-known/openid-configuration", deps.OAuth2.Discovery)
 		mux.HandleFunc("GET /jwks.json", deps.OAuth2.JWKS)
 		mux.HandleFunc("GET /logout", deps.OAuth2.Logout)
+		mux.HandleFunc("POST /revoke", deps.OAuth2.Revoke)
+		mux.HandleFunc("POST /introspect", deps.OAuth2.Introspect)
 		mux.HandleFunc("POST /admin/clients", deps.OAuth2.CreateClient)
 	}
 

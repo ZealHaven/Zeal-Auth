@@ -23,7 +23,7 @@ func setupEmailService(t *testing.T) (*EmailService, *repository.UserRepository)
 	userRepo := repository.NewUserRepository(testPool)
 	verificationRepo := repository.NewVerificationRepository(testPool)
 	resetRepo := repository.NewResetRepository(testPool)
-	emailSvc := NewEmailService(userRepo, verificationRepo, resetRepo, testPool, nil)
+	emailSvc := NewEmailService(userRepo, verificationRepo, resetRepo, testPool, nil, nil, "http://localhost:8080")
 	return emailSvc, userRepo
 }
 
@@ -428,4 +428,52 @@ func generateResetTokenDirect(ctx context.Context, svc *EmailService, userID uui
 	tokenHash := HashToken(raw)
 	err = svc.reset.Create(ctx, userID, tokenHash, time.Now().Add(60*time.Minute))
 	return raw, err
+}
+
+// AC-2-4: password reset must revoke fosite-issued tokens (stored in fosite_requests).
+func TestResetPassword_RevokesFositeTokens(t *testing.T) {
+	svc, userRepo := setupEmailService(t)
+	ctx := context.Background()
+	uid := createUser(t, userRepo, "revoketokens@example.com")
+	otherID := uuid.New()
+
+	seed := func(key, subject string) {
+		t.Helper()
+		_, err := testPool.Exec(ctx,
+			`INSERT INTO auth.fosite_requests (key, data)
+			 VALUES ($1, jsonb_build_object('session_data', jsonb_build_object('subject', $2::text)))`,
+			key, subject)
+		if err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+	seed("refreshtoken:mine", uid.String())
+	seed("accesstoken:mine", uid.String())
+	seed("refreshtoken:other", otherID.String())
+
+	raw, err := generateResetTokenDirect(ctx, svc, uid)
+	if err != nil {
+		t.Fatalf("generate reset token: %v", err)
+	}
+	if _, status, err := svc.ResetPassword(ctx, raw, "newpassword123"); err != nil || status != 200 {
+		t.Fatalf("ResetPassword: status=%d err=%v", status, err)
+	}
+
+	countFor := func(key string) int {
+		var n int
+		if err := testPool.QueryRow(ctx,
+			`SELECT count(*) FROM auth.fosite_requests WHERE key = $1`, key).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", key, err)
+		}
+		return n
+	}
+	if n := countFor("refreshtoken:mine"); n != 0 {
+		t.Errorf("user refresh token still present (n=%d)", n)
+	}
+	if n := countFor("accesstoken:mine"); n != 0 {
+		t.Errorf("user access token still present (n=%d)", n)
+	}
+	if n := countFor("refreshtoken:other"); n != 1 {
+		t.Errorf("other user's token wrongly revoked (n=%d)", n)
+	}
 }

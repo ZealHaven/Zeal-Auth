@@ -7,6 +7,16 @@ type Config struct {
 	RedisURL     string
 	ServerPort   string
 	CookieDomain string
+	Env          string // APP_ENV: "dev" or "prod"; prod fail-fasts on weak secrets
+	AdminToken   string // X-Admin-Token for /admin/* routes
+
+	EmailDriver string // log | smtp (default log)
+	SMTPHost    string
+	SMTPPort    string
+	SMTPUser    string
+	SMTPPass    string
+	EmailFrom   string
+	PublicURL   string // absolute base URL used in email links
 
 	GoogleClientID     string
 	GoogleClientSecret string
@@ -28,6 +38,16 @@ func Load() *Config {
 		RedisURL:     getenv("REDIS_URL", "redis://localhost:6379/0"),
 		ServerPort:   getenv("SERVER_PORT", "8080"),
 		CookieDomain: getenv("COOKIE_DOMAIN", "auth.yourdomain.com"),
+		Env:          getenv("APP_ENV", "dev"),
+		AdminToken:   os.Getenv("ADMIN_TOKEN"),
+
+		EmailDriver: getenv("EMAIL_DRIVER", "log"),
+		SMTPHost:    os.Getenv("SMTP_HOST"),
+		SMTPPort:    os.Getenv("SMTP_PORT"),
+		SMTPUser:    os.Getenv("SMTP_USER"),
+		SMTPPass:    os.Getenv("SMTP_PASSWORD"),
+		EmailFrom:   os.Getenv("EMAIL_FROM"),
+		PublicURL:   os.Getenv("PUBLIC_URL"),
 
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),

@@ -2,8 +2,10 @@ package handler
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,16 +15,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/ory/fosite"
+	"github.com/ory/fosite/token/jwt"
 
 	"github.com/zeal/auth/internal/service"
 )
 
 // OAuth2Handler handles OAuth2/OIDC endpoints.
 type OAuth2Handler struct {
-	oauth     *OAuthHandler
-	pool      *pgxpool.Pool
-	keySvc    *service.KeyService
-	config    *FositeConfig
+	oauth      *OAuthHandler
+	pool       *pgxpool.Pool
+	keySvc     *service.KeyService
+	config     *FositeConfig
 	sessionSvc *service.SessionService
 }
 
@@ -54,9 +57,23 @@ func (h *OAuth2Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set user data on the session for OIDC ID token claims
-	oidcSess := req.GetSession().(*openidSession)
+	// No consent screen for own products (MVP): grant everything the client
+	// is allowed to request; fosite's scope strategy rejects the rest
+	for _, scope := range req.GetRequestedScopes() {
+		req.GrantScope(scope)
+	}
+
+	// Session is attached to the request by NewAuthorizeResponse, not NewAuthorizeRequest
+	oidcSess := &openidSession{}
 	oidcSess.Subject = sess.UserID
+	oidcSess.Claims = &jwt.IDTokenClaims{
+		Subject:     sess.UserID,
+		RequestedAt: time.Now().UTC(),
+		Extra: map[string]any{
+			"email":          sess.Email,
+			"email_verified": sess.EmailVerified,
+		},
+	}
 	oidcSess.Extra = map[string]any{
 		"email":          sess.Email,
 		"email_verified": sess.EmailVerified,
@@ -64,6 +81,7 @@ func (h *OAuth2Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.oauth.fosite.NewAuthorizeResponse(ctx, req, oidcSess)
 	if err != nil {
+		logOAuthErr("authorize response", err)
 		h.oauth.fosite.WriteAuthorizeError(ctx, w, req, err)
 		return
 	}
@@ -73,18 +91,29 @@ func (h *OAuth2Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 
 // ---- /token ----
 
+// logOAuthErr surfaces fosite's Debug/Hint fields — fosite's Error() hides them.
+func logOAuthErr(op string, err error) {
+	if rfcErr := fosite.ErrorToRFC6749Error(err); rfcErr != nil {
+		log.Printf("%s error: hint=%q debug=%q", op, rfcErr.HintField, rfcErr.DebugField)
+	} else {
+		log.Printf("%s error: %+v", op, err)
+	}
+}
+
 func (h *OAuth2Handler) Token(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	session := &openidSession{}
 	accessRequest, err := h.oauth.fosite.NewAccessRequest(ctx, r, session)
 	if err != nil {
+		logOAuthErr("new access request", err)
 		h.oauth.fosite.WriteAccessError(ctx, w, accessRequest, err)
 		return
 	}
 
 	resp, err := h.oauth.fosite.NewAccessResponse(ctx, accessRequest)
 	if err != nil {
+		logOAuthErr("new access response", err)
 		h.oauth.fosite.WriteAccessError(ctx, w, accessRequest, err)
 		return
 	}
@@ -135,24 +164,48 @@ func (h *OAuth2Handler) UserInfo(w http.ResponseWriter, r *http.Request) {
 func (h *OAuth2Handler) Discovery(w http.ResponseWriter, _ *http.Request) {
 	issuer := h.config.Issuer
 	doc := map[string]any{
-		"issuer":                                issuer,
-		"authorization_endpoint":                issuer + "/authorize",
-		"token_endpoint":                        issuer + "/token",
-		"userinfo_endpoint":                     issuer + "/userinfo",
-		"jwks_uri":                              issuer + "/jwks.json",
-		"revocation_endpoint":                   issuer + "/revoke",
-		"introspection_endpoint":                issuer + "/introspect",
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"RS256"},
-		"scopes_supported":                      []string{"openid", "profile", "email"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
+		"issuer":                                        issuer,
+		"authorization_endpoint":                        issuer + "/authorize",
+		"token_endpoint":                                issuer + "/token",
+		"userinfo_endpoint":                             issuer + "/userinfo",
+		"jwks_uri":                                      issuer + "/jwks.json",
+		"revocation_endpoint":                           issuer + "/revoke",
+		"introspection_endpoint":                        issuer + "/introspect",
+		"response_types_supported":                      []string{"code"},
+		"grant_types_supported":                         []string{"authorization_code", "refresh_token"},
+		"subject_types_supported":                       []string{"public"},
+		"id_token_signing_alg_values_supported":         []string{"RS256"},
+		"scopes_supported":                              []string{"openid", "profile", "email"},
+		"code_challenge_methods_supported":              []string{"S256"},
+		"token_endpoint_auth_methods_supported":         []string{"client_secret_post", "client_secret_basic"},
+		"introspection_endpoint_auth_methods_supported": []string{"client_secret_basic"},
+		"revocation_endpoint_auth_methods_supported":    []string{"client_secret_basic", "client_secret_post"},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(doc)
+}
+
+// ---- /revoke (RFC 7009) ----
+
+func (h *OAuth2Handler) Revoke(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	err := h.oauth.fosite.NewRevocationRequest(ctx, r)
+	h.oauth.fosite.WriteRevocationResponse(ctx, w, err)
+}
+
+// ---- /introspect (RFC 7662) ----
+
+func (h *OAuth2Handler) Introspect(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	session := &openidSession{}
+	responder, err := h.oauth.fosite.NewIntrospectionRequest(ctx, r, session)
+	if err != nil {
+		logOAuthErr("introspection", err)
+		h.oauth.fosite.WriteIntrospectionError(ctx, w, err)
+		return
+	}
+	h.oauth.fosite.WriteIntrospectionResponse(ctx, w, responder)
 }
 
 // ---- /jwks.json ----
@@ -205,6 +258,13 @@ func (h *OAuth2Handler) Logout(w http.ResponseWriter, r *http.Request) {
 // ---- Admin: Create Client ----
 
 func (h *OAuth2Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
+	// Fail closed: no token configured → admin API disabled
+	if h.config.AdminToken == "" ||
+		subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Admin-Token")), []byte(h.config.AdminToken)) != 1 {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
 	var req struct {
 		ID           string   `json:"id"`
 		Secret       string   `json:"secret"`
@@ -259,10 +319,26 @@ type SSOSession struct {
 	EmailVerified bool
 }
 
-// openidSession implements fosite.Session for OIDC flows.
+// openidSession implements fosite.Session and openid.Session for OIDC flows.
 type openidSession struct {
 	fosite.DefaultSession
-	Extra map[string]any `json:"extra,omitempty"`
+	Claims  *jwt.IDTokenClaims `json:"claims,omitempty"`
+	Headers *jwt.Headers       `json:"headers,omitempty"`
+	Extra   map[string]any     `json:"extra,omitempty"`
+}
+
+func (s *openidSession) IDTokenClaims() *jwt.IDTokenClaims {
+	if s.Claims == nil {
+		s.Claims = &jwt.IDTokenClaims{RequestedAt: time.Now().UTC()}
+	}
+	return s.Claims
+}
+
+func (s *openidSession) IDTokenHeaders() *jwt.Headers {
+	if s.Headers == nil {
+		s.Headers = &jwt.Headers{}
+	}
+	return s.Headers
 }
 
 func (s *openidSession) Clone() fosite.Session {
@@ -279,6 +355,20 @@ func (s *openidSession) Clone() fosite.Session {
 	}
 	for k, v := range s.Extra {
 		c.Extra[k] = v
+	}
+	if s.Claims != nil {
+		claimsCopy := *s.Claims
+		if s.Claims.Extra != nil {
+			claimsCopy.Extra = make(map[string]any, len(s.Claims.Extra))
+			for k, v := range s.Claims.Extra {
+				claimsCopy.Extra[k] = v
+			}
+		}
+		c.Claims = &claimsCopy
+	}
+	if s.Headers != nil {
+		headersCopy := *s.Headers
+		c.Headers = &headersCopy
 	}
 	return c
 }

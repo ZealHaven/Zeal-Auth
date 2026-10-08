@@ -14,6 +14,7 @@ type AuthHandler struct {
 	auth       *service.AuthService
 	email      *service.EmailService
 	sessionSvc *service.SessionService
+	broker     *service.BrokerService
 	config     *handlerConfig
 }
 
@@ -27,6 +28,11 @@ func NewAuthHandler(auth *service.AuthService, email *service.EmailService, sess
 
 func (h *AuthHandler) SetCookieDomain(domain string) {
 	h.config.CookieDomain = domain
+}
+
+// SetBroker enables completing a pending social-account link during login.
+func (h *AuthHandler) SetBroker(b *service.BrokerService) {
+	h.broker = b
 }
 
 type signupRequest struct {
@@ -116,9 +122,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Create session and set cookie
 	if h.sessionSvc != nil {
 		sess, err := h.sessionSvc.Create(r.Context(), result.User.ID.String(), "")
-		if err == nil {
-			service.SetSessionCookie(w, sess.ID, h.config.CookieDomain)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
 		}
+		service.SetSessionCookie(w, sess.ID, h.config.CookieDomain)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

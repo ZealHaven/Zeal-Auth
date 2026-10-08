@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,11 +11,11 @@ import (
 	"github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/fosite/handler/openid"
 	"github.com/ory/fosite/handler/pkce"
-	"github.com/ory/fosite/storage"
 	"github.com/ory/fosite/token/hmac"
 	"github.com/ory/fosite/token/jwt"
 
 	"github.com/zeal/auth/internal/service"
+	authstorage "github.com/zeal/auth/internal/storage"
 )
 
 // FositeConfig holds fosite-specific configuration.
@@ -30,6 +29,7 @@ type FositeConfig struct {
 	MinParameterEntropy  int
 	CookieDomain         string
 	GlobalSecret         []byte
+	AdminToken           string // required for /admin/* routes; empty = all admin requests rejected
 }
 
 func DefaultFositeConfig(issuer, cookieDomain string) *FositeConfig {
@@ -48,16 +48,16 @@ func DefaultFositeConfig(issuer, cookieDomain string) *FositeConfig {
 
 // OAuthHandler holds all OAuth2-related dependencies.
 type OAuthHandler struct {
-	fosite   fosite.OAuth2Provider
-	pool     *pgxpool.Pool
-	keySvc   *service.KeyService
-	config   *FositeConfig
+	fosite fosite.OAuth2Provider
+	pool   *pgxpool.Pool
+	keySvc *service.KeyService
+	config *FositeConfig
 }
 
 // NewFositeServer creates a fully configured fosite.OAuth2Provider with all
 // handlers wired for Authorization Code + PKCE, OIDC, and refresh tokens.
 func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *FositeConfig) (*OAuthHandler, error) {
-	memStore := storage.NewMemoryStore()
+	store := authstorage.NewFositeStorage(pool)
 
 	config := &fosite.Config{
 		AccessTokenLifespan:            cfg.AccessTokenLifespan,
@@ -72,12 +72,11 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 		AllowedPromptValues:            []string{"login", "none"},
 		ScopeStrategy:                  fosite.WildcardScopeStrategy,
 		AudienceMatchingStrategy:       fosite.DefaultAudienceMatchingStrategy,
+		RefreshTokenScopes:             []string{}, // issue refresh tokens regardless of scope
 		TokenURL:                       cfg.Issuer + "/token",
 		GlobalSecret:                   cfg.GlobalSecret,
-		RedirectSecureChecker: func(_ context.Context, u *url.URL) bool {
-			// Allow all redirects in dev; enforce HTTPS in prod
-			return u.Scheme == "https" || u.Host == "localhost"
-		},
+		// RedirectSecureChecker left nil → fosite.IsRedirectURISecure
+		// (https anywhere, http only for localhost/loopback)
 	}
 
 	// HMAC strategy for opaque tokens (auth codes, refresh tokens, access tokens)
@@ -106,11 +105,12 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 
 	// 1. Authorize Code + Token (explicit grant)
 	authCodeHandler := &oauth2.AuthorizeExplicitGrantHandler{
-		AccessTokenStrategy:   hmacStrat,
-		RefreshTokenStrategy:  hmacStrat,
-		AuthorizeCodeStrategy: hmacStrat,
-		CoreStorage:           memStore,
-		Config:                config,
+		AccessTokenStrategy:    hmacStrat,
+		RefreshTokenStrategy:   hmacStrat,
+		AuthorizeCodeStrategy:  hmacStrat,
+		CoreStorage:            store,
+		TokenRevocationStorage: store, // required for replay revocation
+		Config:                 config,
 	}
 	config.AuthorizeEndpointHandlers.Append(authCodeHandler)
 	config.TokenEndpointHandlers.Append(authCodeHandler)
@@ -119,7 +119,7 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 	refreshHandler := &oauth2.RefreshTokenGrantHandler{
 		AccessTokenStrategy:    hmacStrat,
 		RefreshTokenStrategy:   hmacStrat,
-		TokenRevocationStorage: memStore,
+		TokenRevocationStorage: store,
 		Config:                 config,
 	}
 	config.TokenEndpointHandlers.Append(refreshHandler)
@@ -127,7 +127,7 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 	// 3. PKCE
 	pkceHandler := &pkce.Handler{
 		AuthorizeCodeStrategy: hmacStrat,
-		Storage:               memStore,
+		Storage:               store,
 		Config:                config,
 	}
 	config.AuthorizeEndpointHandlers.Append(pkceHandler)
@@ -135,12 +135,12 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 
 	// 4. OpenID Connect (appended AFTER authorize code handler)
 	oidcHandler := &openid.OpenIDConnectExplicitHandler{
-		OpenIDConnectRequestStorage: memStore,
+		OpenIDConnectRequestStorage: store,
 		IDTokenHandleHelper: &openid.IDTokenHandleHelper{
 			IDTokenStrategy: oidcStrategy,
 		},
 		OpenIDConnectRequestValidator: openid.NewOpenIDConnectRequestValidator(jwtSigner, config),
-		Config: config,
+		Config:                        config,
 	}
 	config.AuthorizeEndpointHandlers.Append(oidcHandler)
 	config.TokenEndpointHandlers.Append(oidcHandler)
@@ -155,7 +155,7 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 
 	// 6. Token Revocation
 	config.RevocationHandlers.Append(&oauth2.TokenRevocationHandler{
-		TokenRevocationStorage: memStore,
+		TokenRevocationStorage: store,
 		AccessTokenStrategy:    hmacStrat,
 		RefreshTokenStrategy:   hmacStrat,
 	})
@@ -163,11 +163,11 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 	// 7. Token Introspection
 	config.TokenIntrospectionHandlers.Append(&oauth2.CoreValidator{
 		CoreStrategy: hmacStrat,
-		CoreStorage:  memStore,
+		CoreStorage:  store,
 		Config:       config,
 	})
 
-	provider := fosite.NewOAuth2Provider(memStore, config)
+	provider := fosite.NewOAuth2Provider(store, config)
 
 	return &OAuthHandler{
 		fosite: provider,

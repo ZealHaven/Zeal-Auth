@@ -18,7 +18,9 @@
         <div class="error">{{.Error}}</div>
         {{end}}
 
-        <form method="POST" action="/login?link_provider={{.Provider}}&email={{.Email}}">
+        <form method="POST" action="/login-form">
+            <input type="hidden" name="link_token" value="{{.Token}}">
+            <input type="hidden" name="provider" value="{{.Provider}}">
             <div class="form-group">
                 <label for="email">Email</label>
                 <input type="email" id="email" name="email" value="{{.Email}}" readonly>

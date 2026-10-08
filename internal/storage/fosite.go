@@ -11,25 +11,35 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/ory/fosite"
+	"github.com/ory/fosite/handler/oauth2"
+	"github.com/ory/fosite/handler/openid"
+	"github.com/ory/fosite/handler/pkce"
 )
 
 // Ensure FositeStorage implements all required fosite storage interfaces.
 var (
-	_ fosite.Storage       = (*FositeStorage)(nil)
-	_ fosite.ClientManager = (*FositeStorage)(nil)
+	_ fosite.Storage                     = (*FositeStorage)(nil)
+	_ fosite.ClientManager               = (*FositeStorage)(nil)
+	_ oauth2.CoreStorage                 = (*FositeStorage)(nil)
+	_ oauth2.TokenRevocationStorage      = (*FositeStorage)(nil)
+	_ pkce.PKCERequestStorage            = (*FositeStorage)(nil)
+	_ openid.OpenIDConnectRequestStorage = (*FositeStorage)(nil)
 )
 
 // storedRequest is a serializable version of fosite.Request.
 type storedRequest struct {
-	ID                string              `json:"id"`
-	RequestedAt       time.Time           `json:"requested_at"`
+	ID                string                `json:"id"`
+	RequestedAt       time.Time             `json:"requested_at"`
 	Client            *fosite.DefaultClient `json:"client"`
-	RequestedScope    []string            `json:"requested_scope"`
-	GrantedScope      []string            `json:"granted_scope"`
-	Form              map[string][]string `json:"form"`
-	SessionData       json.RawMessage     `json:"session_data"`
-	RequestedAudience []string            `json:"requested_audience"`
-	GrantedAudience   []string            `json:"granted_audience"`
+	RequestedScope    []string              `json:"requested_scope"`
+	GrantedScope      []string              `json:"granted_scope"`
+	Form              map[string][]string   `json:"form"`
+	SessionData       json.RawMessage       `json:"session_data"`
+	RequestedAudience []string              `json:"requested_audience"`
+	GrantedAudience   []string              `json:"granted_audience"`
+	// Invalidated marks a single-use authorize code as redeemed. Kept (not
+	// deleted) so fosite can revoke tokens issued from a replayed code.
+	Invalidated bool `json:"invalidated,omitempty"`
 }
 
 func requestToStored(req fosite.Requester) *storedRequest {
@@ -230,11 +240,50 @@ func (s *FositeStorage) CreateAuthorizeCodeSession(ctx context.Context, code str
 }
 
 func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string, session fosite.Session) (fosite.Requester, error) {
-	return s.getRequest(ctx, "authcode:"+hashToken(code), session)
+	key := "authcode:" + hashToken(code)
+	var data []byte
+	err := s.db.QueryRow(ctx, `SELECT data FROM auth.fosite_requests WHERE key = $1`, key).Scan(&data)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fosite.ErrNotFound
+		}
+		return nil, err
+	}
+	var sr storedRequest
+	if err := json.Unmarshal(data, &sr); err != nil {
+		return nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	if sr.Client == nil {
+		sr.Client = &fosite.DefaultClient{}
+	}
+	req := sr.toRequest(session)
+	if sr.Invalidated {
+		return req, fosite.ErrInvalidatedAuthorizeCode
+	}
+	return req, nil
 }
 
 func (s *FositeStorage) InvalidateAuthorizeCodeSession(ctx context.Context, code string) error {
-	return s.deleteRequest(ctx, "authcode:"+hashToken(code))
+	key := "authcode:" + hashToken(code)
+	var data []byte
+	err := s.db.QueryRow(ctx, `SELECT data FROM auth.fosite_requests WHERE key = $1`, key).Scan(&data)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fosite.ErrNotFound
+		}
+		return err
+	}
+	var sr storedRequest
+	if err := json.Unmarshal(data, &sr); err != nil {
+		return fmt.Errorf("unmarshal: %w", err)
+	}
+	sr.Invalidated = true
+	raw, err := json.Marshal(&sr)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	_, err = s.db.Exec(ctx, `UPDATE auth.fosite_requests SET data = $2 WHERE key = $1`, key, raw)
+	return err
 }
 
 func (s *FositeStorage) CreateAccessTokenSession(ctx context.Context, signature string, request fosite.Requester) error {
@@ -280,15 +329,57 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 }
 
 func (s *FositeStorage) GetRefreshTokenSession(ctx context.Context, signature string, session fosite.Session) (fosite.Requester, error) {
-	return s.getRequest(ctx, "refreshtoken:"+signature, session)
+	key := "refreshtoken:" + signature
+	var data []byte
+	err := s.db.QueryRow(ctx, `SELECT data FROM auth.fosite_requests WHERE key = $1`, key).Scan(&data)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fosite.ErrNotFound
+		}
+		return nil, err
+	}
+	var sr storedRequest
+	if err := json.Unmarshal(data, &sr); err != nil {
+		return nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	if sr.Client == nil {
+		sr.Client = &fosite.DefaultClient{}
+	}
+	req := sr.toRequest(session)
+	if sr.Invalidated {
+		// Rotated away — fosite needs the request for reuse detection
+		return req, fosite.ErrInactiveToken
+	}
+	return req, nil
 }
 
 func (s *FositeStorage) DeleteRefreshTokenSession(ctx context.Context, signature string) error {
 	return s.deleteRequest(ctx, "refreshtoken:"+signature)
 }
 
+// RotateRefreshToken marks the old refresh token as rotated. It stays
+// retrievable so a replay returns ErrInactiveToken and triggers family revocation.
 func (s *FositeStorage) RotateRefreshToken(ctx context.Context, requestID string, refreshTokenSignature string) error {
-	return nil
+	key := "refreshtoken:" + refreshTokenSignature
+	var data []byte
+	err := s.db.QueryRow(ctx, `SELECT data FROM auth.fosite_requests WHERE key = $1`, key).Scan(&data)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fosite.ErrNotFound
+		}
+		return err
+	}
+	var sr storedRequest
+	if err := json.Unmarshal(data, &sr); err != nil {
+		return fmt.Errorf("unmarshal: %w", err)
+	}
+	sr.Invalidated = true
+	raw, err := json.Marshal(&sr)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	_, err = s.db.Exec(ctx, `UPDATE auth.fosite_requests SET data = $2 WHERE key = $1`, key, raw)
+	return err
 }
 
 func (s *FositeStorage) RevokeRefreshToken(ctx context.Context, requestID string) error {
@@ -311,12 +402,29 @@ func (s *FositeStorage) RevokeAccessToken(ctx context.Context, requestID string)
 	return nil
 }
 
+// ---- PKCERequestStorage ----
+
+func (s *FositeStorage) CreatePKCERequestSession(ctx context.Context, signature string, request fosite.Requester) error {
+	return s.storeRequest(ctx, "pkce:"+signature, request)
+}
+
+func (s *FositeStorage) GetPKCERequestSession(ctx context.Context, signature string, session fosite.Session) (fosite.Requester, error) {
+	return s.getRequest(ctx, "pkce:"+signature, session)
+}
+
+func (s *FositeStorage) DeletePKCERequestSession(ctx context.Context, signature string) error {
+	return s.deleteRequest(ctx, "pkce:"+signature)
+}
+
+// ---- OpenIDConnectRequestStorage ----
+
 func (s *FositeStorage) CreateOpenIDConnectSession(ctx context.Context, authorizeCode string, request fosite.Requester) error {
 	return s.storeRequest(ctx, "oidcsession:"+hashToken(authorizeCode), request)
 }
 
-func (s *FositeStorage) GetOpenIDConnectSession(ctx context.Context, authorizeCode string, _ fosite.Requester) (fosite.Requester, error) {
-	return s.getRequest(ctx, "oidcsession:"+hashToken(authorizeCode), nil)
+func (s *FositeStorage) GetOpenIDConnectSession(ctx context.Context, authorizeCode string, request fosite.Requester) (fosite.Requester, error) {
+	// Hydrate into the caller's session — fosite needs it to issue the ID token
+	return s.getRequest(ctx, "oidcsession:"+hashToken(authorizeCode), request.GetSession())
 }
 
 func (s *FositeStorage) DeleteOpenIDConnectSession(ctx context.Context, authorizeCode string) error {
