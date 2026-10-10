@@ -33,7 +33,7 @@ cmd/server/main.go         — entrypoint, wires config/DB/router, graceful shut
 internal/config/config.go  — env-based Config struct with defaults
 internal/db/db.go          — pgxpool.NewWithConfig + Ping on startup
 internal/handler/handler.go — http.NewServeMux router with /health
-docker-compose.yml         — postgres:16-alpine (5433), redis:7-alpine (6379)
+docker-compose.yml         — postgres:18-alpine (5435), redis:8-alpine (6380)
 .env.example               — all config vars with empty values
 ```
 

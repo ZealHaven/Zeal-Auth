@@ -45,10 +45,13 @@ func (r *UserRepository) Create(ctx context.Context, email, passwordHash string)
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, email_verified, created_at, updated_at
+		`SELECT id, email, password_hash, email_verified, created_at, updated_at,
+		        role, disabled_at, totp_secret, totp_enabled
 		 FROM auth.users WHERE email = $1`,
 		email,
-	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified,
+		&user.CreatedAt, &user.UpdatedAt, &user.Role, &user.DisabledAt,
+		&user.TOTPSecret, &user.TOTPEnabled)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -62,10 +65,13 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, email_verified, created_at, updated_at
+		`SELECT id, email, password_hash, email_verified, created_at, updated_at,
+		        role, disabled_at, totp_secret, totp_enabled
 		 FROM auth.users WHERE id = $1`,
 		id,
-	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified,
+		&user.CreatedAt, &user.UpdatedAt, &user.Role, &user.DisabledAt,
+		&user.TOTPSecret, &user.TOTPEnabled)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

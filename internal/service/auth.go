@@ -20,6 +20,7 @@ var (
 	ErrEmailAlreadyExists = errors.New("email_already_exists")
 	ErrInvalidEmail       = errors.New("invalid_email")
 	ErrPasswordTooShort   = errors.New("password_too_short")
+	ErrAccountDisabled    = errors.New("account_disabled")
 )
 
 type AuthService struct {
@@ -75,6 +76,10 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 			return nil, ErrInvalidCredentials
 		}
 		return nil, err
+	}
+
+	if user.DisabledAt != nil {
+		return nil, ErrAccountDisabled
 	}
 
 	if user.PasswordHash == nil {

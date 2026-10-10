@@ -20,8 +20,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.DatabaseURL != "postgres://auth:auth@localhost:5435/auth?sslmode=disable" {
 		t.Errorf("default DatabaseURL = %q, want default postgres URL", cfg.DatabaseURL)
 	}
-	if cfg.RedisURL != "redis://localhost:6379/0" {
-		t.Errorf("default RedisURL = %q, want %q", cfg.RedisURL, "redis://localhost:6379/0")
+	if cfg.RedisURL != "redis://localhost:6380/0" {
+		t.Errorf("default RedisURL = %q, want %q", cfg.RedisURL, "redis://localhost:6380/0")
 	}
 }
 

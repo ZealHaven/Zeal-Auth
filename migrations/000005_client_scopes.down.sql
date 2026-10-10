@@ -1,0 +1,1 @@
+ALTER TABLE auth.clients DROP COLUMN IF EXISTS scopes;

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/mail"
 	"net/smtp"
 )
 
@@ -38,6 +39,13 @@ func (m SMTPMailer) Send(_ context.Context, to, subject, body string) error {
 	}
 	addr := net.JoinHostPort(m.Host, port)
 
+	// EMAIL_FROM may be "Name <addr@x>" — the SMTP envelope needs the bare
+	// address; the header keeps the display form.
+	from := m.From
+	if a, err := mail.ParseAddress(m.From); err == nil {
+		from = a.Address
+	}
+
 	var auth smtp.Auth
 	if m.User != "" {
 		auth = smtp.PlainAuth("", m.User, m.Password, m.Host)
@@ -47,5 +55,5 @@ func (m SMTPMailer) Send(_ context.Context, to, subject, body string) error {
 		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
 		m.From, to, subject, body,
 	)
-	return smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg))
+	return smtp.SendMail(addr, auth, from, []string{to}, []byte(msg))
 }

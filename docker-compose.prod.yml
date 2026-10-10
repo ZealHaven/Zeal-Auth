@@ -1,0 +1,124 @@
+# Production stack (spec 4.1) — zero dev credentials, pg/redis unpublished.
+# Requires a .env (see .env.example); boot fails fast on missing secrets (4.4).
+# Usage: docker compose -f docker-compose.prod.yml up -d --wait
+name: zeal-auth-prod
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Spec 4.8: migrations run as a deploy step; app starts only after success
+  # (AC-4-6 via depends_on condition=service_completed_successfully).
+  # Usage: docker compose -f docker-compose.prod.yml --profile deploy run --rm migrate
+  migrate:
+    image: migrate/migrate:v4.19.0
+    profiles: ["deploy"]
+    volumes:
+      - ./migrations:/migrations
+    command:
+      - "-path"
+      - "/migrations"
+      - "-database"
+      - "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      - "up"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: prod
+      SERVER_PORT: "8080"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      PUBLIC_URL: ${PUBLIC_URL}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      FOSITE_GLOBAL_SECRET: ${FOSITE_GLOBAL_SECRET}
+      KEY_ENCRYPTION_KEY: ${KEY_ENCRYPTION_KEY}
+      EMAIL_DRIVER: ${EMAIL_DRIVER:-log}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-}
+      KEY_ROTATION_INTERVAL: ${KEY_ROTATION_INTERVAL:-168h}
+      KEY_RETIRE_WINDOW: ${KEY_RETIRE_WINDOW:-168h}
+    ports:
+      - "127.0.0.1:8080:8080" # tunnel origin only — never public
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Spec 4.7: daily pg_dump into ./backups (bind-mounted host dir).
+  backup:
+    image: postgres:18-alpine
+    profiles: ["backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        cd /backups
+        while true; do
+          pg_dump -h postgres -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -Fc \
+            -f "auth-$(date +%%Y%%m%%d-%%H%%M%%S).dump"
+          find /backups -name 'auth-*.dump' -mtime +"$$BACKUP_RETENTION_DAYS" -delete
+          echo "backup complete: $$(ls -t /backups/auth-*.dump | head -1)"
+          sleep 24h
+        done
+
+volumes:
+  pgdata:
+  redisdata:

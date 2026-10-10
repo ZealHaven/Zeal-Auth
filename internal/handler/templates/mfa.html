@@ -1,0 +1,41 @@
+{{define "mfa.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Two-Factor Authentication</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="brand"></div>
+        <h1>Enter authentication code</h1>
+        <p class="subtitle">Open your authenticator app and enter the 6-digit code.</p>
+
+        {{if .Error}}
+        <div class="error">{{.Error}}</div>
+        {{end}}
+
+        <form method="POST" action="/login/totp">
+            <input type="hidden" name="token" value="{{.Token}}">
+            <div class="form-group">
+                <label for="code">Authentication code</label>
+                <input type="text" id="code" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                       placeholder="123456" required autofocus autocomplete="one-time-code">
+            </div>
+            <button type="submit" class="btn-primary">Verify</button>
+        </form>
+
+        <div class="divider">or use a recovery code</div>
+
+        <form method="POST" action="/login/totp">
+            <input type="hidden" name="token" value="{{.Token}}">
+            <div class="form-group">
+                <label for="recovery">Recovery code</label>
+                <input type="text" id="recovery" name="code" placeholder="a1b2c3d4e5" required>
+            </div>
+            <button type="submit" class="btn-secondary">Use recovery code</button>
+        </form>
+    </div>
+</body>
+</html>
+{{end}}

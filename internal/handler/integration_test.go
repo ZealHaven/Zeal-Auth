@@ -79,6 +79,10 @@ func buildIntegRouter() http.Handler {
 		Broker:       brokerHandler,
 		Session:      sessionSvc,
 		CookieDomain: "test.com",
+		RDB:          integRDB,
+		Limiter:      service.NewRateLimiter(integRDB),
+		Audit:        service.NewAuditService(integPool),
+		Webhook:      service.NewWebhookService(integPool),
 	})
 }
 
@@ -104,6 +108,8 @@ func cleanIntegDB(t interface {
 		"federated_identities", "refresh_tokens", "email_verification_tokens",
 		"password_reset_tokens", "clients", "client_redirect_uris", "users", "signing_keys",
 		"fosite_requests", "access_tokens", "client_assertions",
+		"audit_log", "webhooks", "mfa_recovery_codes", "client_post_logout_uris",
+		"scope_grants", "role_scopes",
 	}
 	for _, table := range tables {
 		_, _ = integPool.Exec(ctx, fmt.Sprintf("DELETE FROM auth.%s", table))

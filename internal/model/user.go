@@ -13,4 +13,9 @@ type User struct {
 	EmailVerified bool
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	// spec 5 (000003)
+	Role        string
+	DisabledAt  *time.Time
+	TOTPSecret  *string
+	TOTPEnabled bool
 }

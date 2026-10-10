@@ -1,0 +1,86 @@
+{{define "portal.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Developer Portal</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card" style="max-width:720px">
+        <div class="brand"></div>
+        <h1>Developer portal</h1>
+        <p class="subtitle">Register and manage OAuth clients for your apps.</p>
+
+        {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+        <h2 style="margin-top:24px">Register a client</h2>
+        <form method="POST" action="/portal/clients">
+            <div class="form-group">
+                <label for="name">App name</label>
+                <input type="text" id="name" name="name" placeholder="My App" required>
+            </div>
+            <div class="form-group">
+                <label for="redirect_uris">Redirect URIs (one per line, exact match)</label>
+                <textarea id="redirect_uris" name="redirect_uris" rows="3" required
+                          placeholder="https://myapp.example.com/callback"></textarea>
+            </div>
+            <button type="submit" class="btn-primary">Create client</button>
+        </form>
+
+        <h2 style="margin-top:32px">Your clients</h2>
+        {{if .Clients}}
+        <table style="width:100%;border-collapse:collapse">
+            <tr style="text-align:left;border-bottom:1px solid #2a3342">
+                <th style="padding:8px 4px">Client ID</th>
+                <th style="padding:8px 4px">Name</th>
+                <th style="padding:8px 4px">Status</th>
+                <th style="padding:8px 4px">Tokens</th>
+                <th style="padding:8px 4px"></th>
+            </tr>
+            {{range .Clients}}
+            <tr style="border-bottom:1px solid #1e2631">
+                <td style="padding:8px 4px;font-family:monospace">{{.ID}}</td>
+                <td style="padding:8px 4px">{{.Name}}</td>
+                <td style="padding:8px 4px">{{.Status}}</td>
+                <td style="padding:8px 4px">{{.TokenCount}}</td>
+                <td style="padding:8px 4px">
+                    <form method="POST" action="/portal/clients/{{.ID}}/rotate" style="display:inline">
+                        <button type="submit" class="btn-social">Rotate secret</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </table>
+        {{else}}
+        <p class="subtitle">No clients yet.</p>
+        {{end}}
+    </div>
+</body>
+</html>
+{{end}}
+
+{{define "portal-secret.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Client created</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="brand"></div>
+        <h1>{{.Name}} registered</h1>
+        <p class="subtitle">Copy the client secret now — it is shown only once.</p>
+        <div class="form-group">
+            <label>Client ID</label>
+            <input type="text" readonly value="{{.ClientID}}" onclick="this.select()">
+        </div>
+        <div class="form-group">
+            <label>Client secret</label>
+            <input type="text" readonly value="{{.ClientSecret}}" onclick="this.select()">
+        </div>
+        <a href="/portal"><button class="btn-primary">Back to portal</button></a>
+    </div>
+</body>
+</html>
+{{end}}

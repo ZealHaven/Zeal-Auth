@@ -1,0 +1,30 @@
+{{define "consent.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Authorize {{.ClientName}}</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card">
+        <div class="brand"></div>
+        <h1>Authorize {{.ClientName}}</h1>
+        <p class="subtitle"><strong>{{.ClientName}}</strong> ({{.Email}}) is requesting:</p>
+
+        <ul class="scope-list">
+            {{range .Scopes}}
+            <li>{{.}}</li>
+            {{end}}
+        </ul>
+
+        <form method="POST" action="/consent">
+            <input type="hidden" name="q" value="{{.RawQuery}}">
+            <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+            <input type="hidden" name="state" value="{{.State}}">
+            <button type="submit" name="decision" value="allow" class="btn-primary">Allow</button>
+            <button type="submit" name="decision" value="deny" class="btn-social" style="margin-top:8px">Deny</button>
+        </form>
+    </div>
+</body>
+</html>
+{{end}}

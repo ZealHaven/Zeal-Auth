@@ -2,7 +2,7 @@
 
 **Goal:** Zeal Auth runs as the trusted IdP in prod — secure defaults, fail-fast config, recoverable data.
 
-**Status:** Not started
+**Status:** ✅ Complete (2026-10-10) — all ACs verified against live prod stack (AC-4-8 closes AC-2-7)
 **Depends on:** 3-first-integration.md
 
 ---

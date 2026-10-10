@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -24,20 +26,16 @@ import (
 func buildServer(cfg *config.Config) (http.Handler, func()) {
 	ctx := context.Background()
 
+	// Fail fast: prod refuses to boot on missing/placeholder secrets (spec 4.4, AC-4-2)
+	if problems := cfg.Validate(); len(problems) > 0 {
+		for _, p := range problems {
+			log.Printf("config error: %s", p)
+		}
+		log.Fatalf("invalid prod configuration: %d problem(s)", len(problems))
+	}
+
 	globalSecret := os.Getenv("FOSITE_GLOBAL_SECRET")
 	keyEncKey := cfg.KeyEncryptionKey
-	if cfg.Env == "prod" {
-		// Fail fast: no dev fallbacks in prod
-		if len(globalSecret) < 32 {
-			log.Fatalf("FOSITE_GLOBAL_SECRET must be set to at least 32 bytes in prod")
-		}
-		if len(keyEncKey) != 64 {
-			log.Fatalf("KEY_ENCRYPTION_KEY must be 64 hex chars (32 bytes) in prod")
-		}
-		if cfg.AdminToken == "" {
-			log.Fatalf("ADMIN_TOKEN must be set in prod (client registry would be disabled)")
-		}
-	}
 	if len(globalSecret) < 32 {
 		globalSecret = "fosite-dev-secret-replace-in-prod-32bytes!!"
 	}
@@ -149,14 +147,71 @@ func buildServer(cfg *config.Config) (http.Handler, func()) {
 		BrokerService: brokerSvc,
 		Session:       sessionSvc,
 		CookieDomain:  cfg.CookieDomain,
+		RDB:           rdb,
+		HSTS:          cfg.Env == "prod",
+		Limiter:       service.NewRateLimiter(rdb),
+		Audit:         service.NewAuditService(pool),
+		Webhook:       service.NewWebhookService(pool),
 	})
 
+	// Spec 4.6: automated key rotation — new active key + retire stale ones.
+	stopRotation := startKeyRotation(ctx, pool, cfg)
+
 	cleanup := func() {
+		stopRotation()
 		rdb.Close()
 		pool.Close()
 	}
 
 	return router, cleanup
+}
+
+// startKeyRotation runs RotateKey + RetireOldKeys on a ticker (spec 4.6).
+// KEY_ROTATION_INTERVAL is a Go duration; 0/empty disables (dev default).
+// KEY_RETIRE_WINDOW is how long a retiring key stays in JWKS (default 168h).
+func startKeyRotation(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) func() {
+	interval, err := time.ParseDuration(getenvEnv("KEY_ROTATION_INTERVAL", "0"))
+	if err != nil || interval <= 0 {
+		return func() {}
+	}
+	retireWindow, err := time.ParseDuration(getenvEnv("KEY_RETIRE_WINDOW", "168h"))
+	if err != nil || retireWindow <= 0 {
+		retireWindow = 168 * time.Hour
+	}
+
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				kid := fmt.Sprintf("key-%d", time.Now().Unix())
+				if _, err := service.RotateKey(ctx, pool, kid, cfg.KeyEncryptionKey); err != nil {
+					log.Printf("key rotation: %v", err)
+					continue
+				}
+				log.Printf("key rotation: new active kid=%s", kid)
+				if n, err := service.RetireOldKeys(ctx, pool, retireWindow); err != nil {
+					log.Printf("key retirement: %v", err)
+				} else if n > 0 {
+					log.Printf("key rotation: retired %d key(s)", n)
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+func getenvEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func main() {

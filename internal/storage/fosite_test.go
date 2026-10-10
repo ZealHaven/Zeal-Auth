@@ -51,6 +51,16 @@ func TestMain(m *testing.M) {
 			}
 		}
 	}
+	// Spec 5 migrations — additive + idempotent.
+	for _, f := range []string{
+		"../../migrations/000003_productization.up.sql",
+		"../../migrations/000004_scope_grants.up.sql",
+		"../../migrations/000005_client_scopes.up.sql",
+	} {
+		if out, _ := os.ReadFile(f); out != nil {
+			_, _ = testPool.Exec(ctx, string(out))
+		}
+	}
 
 	code := m.Run()
 

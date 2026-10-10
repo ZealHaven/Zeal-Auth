@@ -16,6 +16,9 @@ type AuthHandler struct {
 	sessionSvc *service.SessionService
 	broker     *service.BrokerService
 	config     *handlerConfig
+	limiter    *service.RateLimiter    // spec 4.5; nil = rate limiting off
+	audit      *service.AuditService   // spec 5.5; nil = no-op
+	webhook    *service.WebhookService // spec 5.13; nil = no-op
 }
 
 type handlerConfig struct {
@@ -25,6 +28,17 @@ type handlerConfig struct {
 func NewAuthHandler(auth *service.AuthService, email *service.EmailService, sessionSvc *service.SessionService) *AuthHandler {
 	return &AuthHandler{auth: auth, email: email, sessionSvc: sessionSvc, config: &handlerConfig{}}
 }
+
+// SetRateLimiter enables brute-force throttling (spec 4.5).
+func (h *AuthHandler) SetRateLimiter(l *service.RateLimiter) {
+	h.limiter = l
+}
+
+// SetAudit enables the spec-5.5 audit trail (nil-safe).
+func (h *AuthHandler) SetAudit(a *service.AuditService) { h.audit = a }
+
+// SetWebhook enables spec-5.13 event dispatch (nil-safe).
+func (h *AuthHandler) SetWebhook(w *service.WebhookService) { h.webhook = w }
 
 func (h *AuthHandler) SetCookieDomain(domain string) {
 	h.config.CookieDomain = domain
@@ -71,6 +85,11 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if secs, ok := rateBlocked(r.Context(), h.limiter, r, "signup", req.Email, generalLimit); ok {
+		writeRateLimited(w, secs)
+		return
+	}
+
 	result, err := h.auth.Signup(r.Context(), req.Email, req.Password)
 	if err != nil {
 		switch {
@@ -83,6 +102,8 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeError(w, http.StatusInternalServerError, "internal_error")
 		}
+		// Count failed attempts (spec 4.5)
+		rateHit(r.Context(), h.limiter, r, "signup", req.Email, generalLimit, generalWindow)
 		return
 	}
 
@@ -91,6 +112,14 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
+
+	uid := result.User.ID.String()
+	h.audit.Log(r.Context(), uid, "signup", uid, clientIP(r), nil)
+	// spec 5.13 / AC-5-9: fire user.created once the account exists.
+	h.webhook.Dispatch(r.Context(), service.EventUserCreated, uid, map[string]any{
+		"user_id": uid,
+		"email":   result.User.Email,
+	})
 
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"message": "Account created. Check your email to verify.",
@@ -104,6 +133,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if secs, ok := rateBlocked(r.Context(), h.limiter, r, "login", req.Email, loginLimit); ok {
+		writeRateLimited(w, secs)
+		return
+	}
+
 	result, err := h.auth.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
 		switch {
@@ -113,9 +147,30 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "email_not_verified")
 		case errors.Is(err, service.ErrSocialAccountOnly):
 			writeError(w, http.StatusForbidden, "social_account_only")
+		case errors.Is(err, service.ErrAccountDisabled):
+			writeError(w, http.StatusForbidden, "account_disabled")
 		default:
 			writeError(w, http.StatusInternalServerError, "internal_error")
 		}
+		// Count failed attempts toward lockout (spec 4.5, AC-4-3)
+		rateHit(r.Context(), h.limiter, r, "login", req.Email, loginLimit, loginWindow)
+		return
+	}
+	rateReset(r.Context(), h.limiter, "login", req.Email)
+
+	// Spec 5.6 step-up: TOTP enabled → issue pending challenge, no session yet.
+	if result.User.TOTPEnabled && h.sessionSvc != nil {
+		token, err := h.sessionSvc.CreatePendingMFA(r.Context(), result.User.ID.String())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		h.audit.Log(r.Context(), result.User.ID.String(), "login.mfa_required", result.User.ID.String(), clientIP(r), nil)
+		if isHTMLRequest(r) {
+			renderTemplate(w, "mfa.html", map[string]string{"Token": token})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"mfa_required": true, "mfa_token": token})
 		return
 	}
 
@@ -128,6 +183,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 		service.SetSessionCookie(w, sess.ID, h.config.CookieDomain)
 	}
+	h.audit.Log(r.Context(), result.User.ID.String(), "login", result.User.ID.String(), clientIP(r), nil)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message": "Login successful",
@@ -188,6 +244,12 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if secs, ok := rateBlocked(r.Context(), h.limiter, r, "reset", req.Email, generalLimit); ok {
+		writeRateLimited(w, secs)
+		return
+	}
+	rateHit(r.Context(), h.limiter, r, "reset", req.Email, generalLimit, generalWindow)
+
 	msg, status, err := h.email.ForgotPassword(r.Context(), req.Email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error")
@@ -203,6 +265,12 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
+
+	if secs, ok := rateBlocked(r.Context(), h.limiter, r, "reset", clientIP(r), generalLimit); ok {
+		writeRateLimited(w, secs)
+		return
+	}
+	rateHit(r.Context(), h.limiter, r, "reset", clientIP(r), generalLimit, generalWindow)
 
 	msg, status, err := h.email.ResetPassword(r.Context(), req.Token, req.Password)
 	if err != nil {

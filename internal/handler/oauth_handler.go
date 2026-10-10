@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	cristalhq "github.com/cristalhq/jwt/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
@@ -57,6 +59,14 @@ func (h *OAuth2Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Spec 5.10 / AC-5-8: consent screen only for clients requesting scopes
+	// beyond the standard set that haven't been granted before. Standard
+	// scopes (own products) and remembered grants skip it.
+	if !h.consentSatisfied(ctx, req, sess.UserID) {
+		http.Redirect(w, r, "/consent?"+r.URL.RawQuery, http.StatusFound)
+		return
+	}
+
 	// No consent screen for own products (MVP): grant everything the client
 	// is allowed to request; fosite's scope strategy rejects the rest
 	for _, scope := range req.GetRequestedScopes() {
@@ -72,11 +82,13 @@ func (h *OAuth2Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		Extra: map[string]any{
 			"email":          sess.Email,
 			"email_verified": sess.EmailVerified,
+			"role":           sess.Role,
 		},
 	}
 	oidcSess.Extra = map[string]any{
 		"email":          sess.Email,
 		"email_verified": sess.EmailVerified,
+		"role":           sess.Role,
 	}
 
 	resp, err := h.oauth.fosite.NewAuthorizeResponse(ctx, req, oidcSess)
@@ -153,6 +165,9 @@ func (h *OAuth2Handler) UserInfo(w http.ResponseWriter, r *http.Request) {
 		if name, ok := session.Extra["name"]; ok {
 			claims["name"] = name
 		}
+		if role, ok := session.Extra["role"]; ok {
+			claims["role"] = role // spec 5.16
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -172,7 +187,7 @@ func (h *OAuth2Handler) Discovery(w http.ResponseWriter, _ *http.Request) {
 		"revocation_endpoint":                           issuer + "/revoke",
 		"introspection_endpoint":                        issuer + "/introspect",
 		"response_types_supported":                      []string{"code"},
-		"grant_types_supported":                         []string{"authorization_code", "refresh_token"},
+		"grant_types_supported":                         []string{"authorization_code", "refresh_token", "client_credentials"},
 		"subject_types_supported":                       []string{"public"},
 		"id_token_signing_alg_values_supported":         []string{"RS256"},
 		"scopes_supported":                              []string{"openid", "profile", "email"},
@@ -237,8 +252,12 @@ func (h *OAuth2Handler) JWKS(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"keys": jwkList})
 }
 
-// ---- /logout ----
+// ---- /logout (spec 5.8: RP-initiated logout) ----
 
+// Logout clears the session and revokes the user's tokens. With an
+// id_token_hint + post_logout_redirect_uri it performs OIDC RP-initiated
+// logout: the URI must be an EXACT match on the client's registered
+// post-logout URIs and that client must be rp_logout_allowed (AC-5-6).
 func (h *OAuth2Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -264,10 +283,205 @@ func (h *OAuth2Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	service.ClearSessionCookie(w, h.config.CookieDomain)
 
 	redirectURI := r.URL.Query().Get("post_logout_redirect_uri")
-	if redirectURI == "" {
-		redirectURI = "/login"
+	if redirectURI != "" {
+		if _, ok := h.validatePostLogout(ctx, r, redirectURI); ok {
+			if state := r.URL.Query().Get("state"); state != "" {
+				sep := "?"
+				if strings.Contains(redirectURI, "?") {
+					sep = "&"
+				}
+				redirectURI += sep + "state=" + url.QueryEscape(state)
+			}
+			http.Redirect(w, r, redirectURI, http.StatusFound)
+			return
+		}
+		// Unregistered/unallowed URI → never bounce there (AC-5-6 exact match).
 	}
-	http.Redirect(w, r, redirectURI, http.StatusFound)
+
+	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+// validatePostLogout enforces AC-5-6: id_token_hint must verify against our
+// signing keys, its aud must be an rp_logout_allowed client, and the
+// requested URI must exactly match a registered post-logout URI for that
+// client. Returns the client id on success.
+func (h *OAuth2Handler) validatePostLogout(ctx context.Context, r *http.Request, redirectURI string) (string, bool) {
+	hint := r.URL.Query().Get("id_token_hint")
+	if hint == "" {
+		return "", false
+	}
+
+	aud, ok := h.verifyIDTokenAudience(ctx, hint)
+	if !ok {
+		return "", false
+	}
+
+	var allowed bool
+	err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM auth.clients c
+			WHERE c.id = $1 AND c.rp_logout_allowed
+			  AND EXISTS (SELECT 1 FROM auth.client_post_logout_uris u
+			              WHERE u.client_id = c.id AND u.redirect_uri = $2)
+		 )`, aud, redirectURI).Scan(&allowed)
+	if err != nil || !allowed {
+		return "", false
+	}
+	return aud, true
+}
+
+// verifyIDTokenAudience parses the hint JWT, checks its signature against all
+// active/retiring signing keys, and returns the aud claim (client id).
+func (h *OAuth2Handler) verifyIDTokenAudience(ctx context.Context, raw string) (string, bool) {
+	keys, err := h.keySvc.GetAllActiveKeys(ctx)
+	if err != nil {
+		return "", false
+	}
+	for _, kp := range keys {
+		pub, err := service.ParseRSAPublicKeyPEM(kp.PublicKeyPEM)
+		if err != nil {
+			continue
+		}
+		verifier, err := cristalhq.NewVerifierRS(cristalhq.RS256, pub)
+		if err != nil {
+			continue
+		}
+		token, err := cristalhq.Parse([]byte(raw), verifier)
+		if err != nil {
+			continue
+		}
+		var claims struct {
+			Aud cristalhq.Audience `json:"aud"`
+			Sub string             `json:"sub"`
+		}
+		if err := token.DecodeClaims(&claims); err != nil {
+			continue
+		}
+		if len(claims.Aud) > 0 && claims.Aud[0] != "" {
+			return claims.Aud[0], true
+		}
+	}
+	return "", false
+}
+
+// ---- consent (spec 5.10) ----
+
+// standardScopes never trigger the consent screen (own-product MVP scopes).
+var standardScopes = map[string]bool{"openid": true, "profile": true, "email": true}
+
+// consentSatisfied reports whether the authorize request may proceed without
+// a consent screen: only standard scopes requested, OR every requested scope
+// already granted for this user+client (AC-5-8).
+func (h *OAuth2Handler) consentSatisfied(ctx context.Context, req fosite.AuthorizeRequester, userID string) bool {
+	clientID := req.GetClient().GetID()
+	var ungranted int
+	for _, scope := range req.GetRequestedScopes() {
+		if standardScopes[scope] {
+			continue
+		}
+		var ok bool
+		if err := h.pool.QueryRow(ctx,
+			`SELECT EXISTS (
+				SELECT 1 FROM auth.scope_grants
+				WHERE client_id = $1 AND user_id = $2 AND scope = $3
+			 )`, clientID, userID, scope).Scan(&ok); err != nil || !ok {
+			ungranted++
+		}
+	}
+	return ungranted == 0
+}
+
+// ConsentPage renders the approval screen (GET /consent?<authorize query>).
+func (h *OAuth2Handler) ConsentPage(w http.ResponseWriter, r *http.Request) {
+	rawQuery := r.URL.RawQuery
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil || q.Get("client_id") == "" || q.Get("redirect_uri") == "" {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	var name string
+	_ = h.pool.QueryRow(r.Context(),
+		`SELECT name FROM auth.clients WHERE id = $1 AND status = 'active'`,
+		q.Get("client_id")).Scan(&name)
+	if name == "" {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	var scopes []string
+	for _, s := range strings.Fields(q.Get("scope")) {
+		if !standardScopes[s] {
+			scopes = append(scopes, s)
+		}
+	}
+
+	sess, ok := h.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	renderTemplate(w, "consent.html", map[string]any{
+		"ClientName":  name,
+		"Scopes":      scopes,
+		"Email":       sess.Email,
+		"RawQuery":    rawQuery,
+		"RedirectURI": q.Get("redirect_uri"),
+		"State":       q.Get("state"),
+	})
+}
+
+// ConsentDecision handles POST /consent — allow remembers the grant and
+// returns to /authorize; deny sends the user back to the client with
+// error=access_denied (AC-5-8).
+func (h *OAuth2Handler) ConsentDecision(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	rawQuery := r.FormValue("q")
+	redirectURI := r.FormValue("redirect_uri")
+	state := r.FormValue("state")
+
+	deny := func() {
+		sep := "?"
+		if strings.Contains(redirectURI, "?") {
+			sep = "&"
+		}
+		target := redirectURI + sep + "error=access_denied"
+		if state != "" {
+			target += "&state=" + url.QueryEscape(state)
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+	}
+
+	if r.FormValue("decision") != "allow" || redirectURI == "" {
+		deny()
+		return
+	}
+
+	sess, ok := h.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil || q.Get("client_id") == "" {
+		deny()
+		return
+	}
+	clientID := q.Get("client_id")
+	for _, scope := range strings.Fields(q.Get("scope")) {
+		if standardScopes[scope] {
+			continue
+		}
+		_, _ = h.pool.Exec(r.Context(),
+			`INSERT INTO auth.scope_grants (client_id, user_id, scope) VALUES ($1,$2,$3)
+			 ON CONFLICT DO NOTHING`, clientID, sess.UserID, scope)
+	}
+
+	http.Redirect(w, r, "/authorize?"+rawQuery, http.StatusFound)
 }
 
 // ---- Admin: Create Client ----
@@ -332,6 +546,7 @@ type SSOSession struct {
 	UserID        string
 	Email         string
 	EmailVerified bool
+	Role          string // spec 5.16 RBAC claim
 }
 
 // openidSession implements fosite.Session and openid.Session for OIDC flows.
@@ -402,10 +617,11 @@ func (h *OAuth2Handler) getSession(r *http.Request) (*SSOSession, bool) {
 	// Look up user data from DB for the OIDC session
 	var email string
 	var emailVerified bool
+	var role string
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT email, email_verified FROM auth.users WHERE id = $1`,
+		`SELECT email, email_verified, role FROM auth.users WHERE id = $1`,
 		sess.UserID,
-	).Scan(&email, &emailVerified)
+	).Scan(&email, &emailVerified, &role)
 	if err != nil {
 		return nil, false
 	}
@@ -414,6 +630,7 @@ func (h *OAuth2Handler) getSession(r *http.Request) (*SSOSession, bool) {
 		UserID:        sess.UserID,
 		Email:         email,
 		EmailVerified: emailVerified,
+		Role:          role,
 	}, true
 }
 

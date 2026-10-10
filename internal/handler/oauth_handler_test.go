@@ -119,13 +119,15 @@ func TestLogout_Redirect(t *testing.T) {
 func TestLogout_PostLogoutRedirect(t *testing.T) {
 	h := &OAuth2Handler{config: &FositeConfig{}}
 
+	// Spec 5.8 / AC-5-6: without a valid id_token_hint + registered URI the
+	// redirect target is ignored — always fall back to /login.
 	req := httptest.NewRequest("GET", "/logout?post_logout_redirect_uri=https://app.example.com", nil)
 	w := httptest.NewRecorder()
 	h.Logout(w, req)
 
 	location := w.Header().Get("Location")
-	if location != "https://app.example.com" {
-		t.Errorf("Location = %q, want https://app.example.com", location)
+	if location != "/login" {
+		t.Errorf("Location = %q, want /login (unvalidated redirect must be ignored)", location)
 	}
 }
 

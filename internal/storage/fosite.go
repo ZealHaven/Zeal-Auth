@@ -161,9 +161,10 @@ func (s *FositeStorage) deleteRequest(ctx context.Context, key string) error {
 func (s *FositeStorage) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	var secretHash, name, status string
 	var createdAt time.Time
+	var scopes []string
 	err := s.db.QueryRow(ctx,
-		`SELECT client_secret_hash, name, status, created_at FROM auth.clients WHERE id = $1`, id,
-	).Scan(&secretHash, &name, &status, &createdAt)
+		`SELECT client_secret_hash, name, status, created_at, scopes FROM auth.clients WHERE id = $1`, id,
+	).Scan(&secretHash, &name, &status, &createdAt, &scopes)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fosite.ErrNotFound
@@ -177,13 +178,16 @@ func (s *FositeStorage) GetClient(ctx context.Context, id string) (fosite.Client
 	if err != nil {
 		return nil, err
 	}
+	if len(scopes) == 0 {
+		scopes = []string{"openid", "profile", "email"}
+	}
 	return &fosite.DefaultClient{
 		ID:            id,
 		Secret:        []byte(secretHash),
 		RedirectURIs:  uris,
-		GrantTypes:    fosite.Arguments{"authorization_code", "refresh_token"},
+		GrantTypes:    fosite.Arguments{"authorization_code", "refresh_token", "client_credentials"},
 		ResponseTypes: fosite.Arguments{"code"},
-		Scopes:        fosite.Arguments{"openid", "profile", "email"},
+		Scopes:        fosite.Arguments(scopes),
 		Audience:      fosite.Arguments{id},
 	}, nil
 }

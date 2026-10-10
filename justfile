@@ -87,3 +87,35 @@ clean:
     set -euo pipefail
     rm -rf bin/ coverage.out coverage.html
     docker compose down -v
+
+# --- Production (spec 4) ---
+
+# Boot prod stack: migrations first, then app (AC-4-6)
+prod-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker compose -f docker-compose.prod.yml --profile deploy run --rm migrate
+    docker compose -f docker-compose.prod.yml up -d --wait
+
+# Stop prod stack (keeps volumes)
+prod-down:
+    docker compose -f docker-compose.prod.yml --profile deploy --profile backup down
+
+# One-off Postgres backup → ./backups (spec 4.7)
+backup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a; source .env; set +a
+    mkdir -p backups
+    docker compose -f docker-compose.prod.yml exec -T postgres \
+      pg_dump -U "${POSTGRES_USER:-auth}" -d "${POSTGRES_DB:-auth}" -Fc \
+      > "backups/auth-$(date +%Y%m%d-%H%M%S).dump"
+    ls -lt backups/ | head -3
+
+# Restore a backup into the running prod Postgres (spec 4.7 runbook)
+restore +dump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a; source .env; set +a
+    docker compose -f docker-compose.prod.yml exec -T postgres \
+      sh -c 'cat > /tmp/restore.dump && pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/restore.dump'

@@ -281,7 +281,7 @@ Unique constraint: (provider, provider_user_id).
 ### Client Registry
 - ✅ **AC-CLIENT-1** Register client → unique client_id + secret; secret shown once, stored hashed. (`TestE2E_Client_Create_SecretShownOnce`; gated by admin token since spec 2.5)
 - ✅ **AC-CLIENT-2** redirect_uri matching is exact — no prefix/partial. (BadRedirectURI test)
-- ❌ **AC-CLIENT-3** Disabling client → rejects all further `/authorize` + `/token`, invalidates existing tokens. `GetClient` honors `status`, but no endpoint to disable (→ spec 5, 5.3).
+- ✅ **AC-CLIENT-3** Disabling client → rejects all further `/authorize` + `/token`, invalidates existing tokens. `GetClient` honors `status`; `POST /admin/clients/{id}/disable` ships in spec 5 (5.3), verified by `TestE2E_Admin_DisableClientInvalidatesTokens`.
 - ✅ **AC-CLIENT-4** client_id always unique regardless of display name.
 
 ### JWT Tokens

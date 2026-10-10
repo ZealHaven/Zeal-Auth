@@ -4,19 +4,13 @@ import (
 	"bytes"
 	"html/template"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func getTestTemplate(t *testing.T) *template.Template {
 	t.Helper()
-	pattern := filepath.Join(templatesDir(), "*.html")
-	tmpl, err := template.ParseGlob(pattern)
-	if err != nil {
-		t.Fatalf("parse templates: %v", err)
-	}
-	return tmpl
+	return getTemplates()
 }
 
 func TestRenderTemplate_Signup(t *testing.T) {

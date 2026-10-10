@@ -5,8 +5,8 @@ Centralized SSO + OAuth2/OIDC provider for ZealHaven products. Issues JWT tokens
 ## Stack
 
 - **Go** + [fosite](https://github.com/ory/fosite) (OAuth2/OIDC)
-- **Postgres 16** — users, clients, tokens
-- **Redis 7** — sessions, revocation
+- **Postgres 18** — users, clients, tokens
+- **Redis 8** — sessions, revocation
 - **Docker Compose** — local dev
 
 ## Quick start
@@ -42,6 +42,12 @@ Server runs at `http://localhost:8080`.
 | GET | /logout | Clear session |
 | GET | /oauth/google | Google login |
 | GET | /oauth/github | GitHub login |
+| POST | /login/totp | TOTP / recovery-code step-up (5.6) |
+| POST | /consent | Scope approval (5.10) |
+| POST | /register | Dynamic Client Registration (5.15) |
+| GET/POST | /admin, /admin/users, /admin/clients, /admin/webhooks | Admin dashboard (5.1–5.5) |
+| GET/POST | /portal | Developer self-service portal (5.14) |
+| GET | /profile | Profile + sessions + password (5.7/5.9) |
 
 ## Testing
 

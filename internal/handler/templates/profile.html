@@ -1,0 +1,51 @@
+{{define "profile.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Your profile</title>
+    {{template "styles" .}}
+</head>
+<body>
+    <div class="card" style="max-width:640px">
+        <div class="brand"></div>
+        <h1>Your profile</h1>
+        <p class="subtitle">{{.Email}}{{if .EmailVerified}} · verified{{else}} · unverified{{end}}</p>
+
+        {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+        {{if .Message}}<div class="subtitle">{{.Message}}</div>{{end}}
+
+        <h2 style="margin-top:24px">Change password</h2>
+        <form method="POST" action="/profile/password-form">
+            <div class="form-group">
+                <label for="current_password">Current password</label>
+                <input type="password" id="current_password" name="current_password" required>
+            </div>
+            <div class="form-group">
+                <label for="new_password">New password</label>
+                <input type="password" id="new_password" name="new_password" minlength="8" required>
+            </div>
+            <button type="submit" class="btn-primary">Change password</button>
+        </form>
+
+        <h2 style="margin-top:32px">Active sessions</h2>
+        <p class="subtitle">Revoke a session to sign that device out immediately.</p>
+        <ul>
+            {{range .Sessions}}
+            <li>
+                <code>{{.ID}}</code>
+                {{if .Current}}(this device){{else}}
+                <form method="POST" action="/profile/sessions/{{.ID}}/revoke" style="display:inline">
+                    <button type="submit" class="btn-social">Revoke</button>
+                </form>
+                {{end}}
+            </li>
+            {{else}}
+            <li>No other sessions.</li>
+            {{end}}
+        </ul>
+
+        <div class="links"><a href="/login">Back to login</a></div>
+    </div>
+</body>
+</html>
+{{end}}

@@ -124,6 +124,16 @@ func NewFositeServer(pool *pgxpool.Pool, keySvc *service.KeyService, cfg *Fosite
 	}
 	config.TokenEndpointHandlers.Append(refreshHandler)
 
+	// 2b. Client Credentials Grant — service-to-service tokens (spec 5.11).
+	config.TokenEndpointHandlers.Append(&oauth2.ClientCredentialsGrantHandler{
+		HandleHelper: &oauth2.HandleHelper{
+			AccessTokenStrategy: hmacStrat,
+			AccessTokenStorage:  store,
+			Config:              config,
+		},
+		Config: config,
+	})
+
 	// 3. PKCE
 	pkceHandler := &pkce.Handler{
 		AuthorizeCodeStrategy: hmacStrat,

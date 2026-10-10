@@ -59,8 +59,15 @@ func (h *AuthHandler) SignupForm(w http.ResponseWriter, r *http.Request) {
 	email := r.FormValue("email")
 	password := r.FormValue("password")
 
+	if secs, ok := rateBlocked(r.Context(), h.limiter, r, "signup", email, generalLimit); ok {
+		writeHTMLRateLimited(w, secs)
+		renderTemplate(w, "signup.html", map[string]string{"Error": "Too many attempts. Try again later."})
+		return
+	}
+
 	result, err := h.auth.Signup(r.Context(), email, password)
 	if err != nil {
+		rateHit(r.Context(), h.limiter, r, "signup", email, generalLimit, generalWindow)
 		var errMsg string
 		switch {
 		case errors.Is(err, service.ErrInvalidEmail):
@@ -101,8 +108,17 @@ func (h *AuthHandler) LoginForm(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	returnTo := r.FormValue("return_to")
 
+	if secs, ok := rateBlocked(r.Context(), h.limiter, r, "login", email, loginLimit); ok {
+		writeHTMLRateLimited(w, secs)
+		renderTemplate(w, "login.html", map[string]string{
+			"Email": email, "Error": "Too many attempts. Try again later.", "ReturnTo": returnTo,
+		})
+		return
+	}
+
 	result, err := h.auth.Login(r.Context(), email, password)
 	if err != nil {
+		rateHit(r.Context(), h.limiter, r, "login", email, loginLimit, loginWindow)
 		var errMsg string
 		switch {
 		case errors.Is(err, service.ErrInvalidCredentials):
@@ -147,6 +163,20 @@ func (h *AuthHandler) LoginForm(w http.ResponseWriter, r *http.Request) {
 		returnTo = linkTo
 	}
 
+	// Spec 5.6: TOTP step-up before a session is issued.
+	if result.User.TOTPEnabled && h.sessionSvc != nil {
+		token, err := h.sessionSvc.CreatePendingMFA(r.Context(), result.User.ID.String())
+		if err != nil {
+			renderTemplate(w, "login.html", map[string]string{
+				"Email": email, "Error": "Something went wrong. Please try again.", "ReturnTo": returnTo,
+			})
+			return
+		}
+		rateReset(r.Context(), h.limiter, "login", email)
+		renderTemplate(w, "mfa.html", map[string]string{"Token": token})
+		return
+	}
+
 	// Create session and set cookie
 	if h.sessionSvc != nil {
 		sess, err := h.sessionSvc.Create(r.Context(), result.User.ID.String(), "")
@@ -160,6 +190,7 @@ func (h *AuthHandler) LoginForm(w http.ResponseWriter, r *http.Request) {
 		}
 		service.SetSessionCookie(w, sess.ID, h.config.CookieDomain)
 	}
+	rateReset(r.Context(), h.limiter, "login", email)
 
 	if returnTo != "" {
 		http.Redirect(w, r, returnTo, http.StatusFound)
@@ -187,6 +218,16 @@ func (h *AuthHandler) ForgotPasswordForm(w http.ResponseWriter, r *http.Request)
 	}
 
 	email := r.FormValue("email")
+
+	if secs, ok := rateBlocked(r.Context(), h.limiter, r, "reset", email, generalLimit); ok {
+		writeHTMLRateLimited(w, secs)
+		renderTemplate(w, "forgot-password.html", map[string]any{
+			"Success": false, "Error": "Too many attempts. Try again later.",
+		})
+		return
+	}
+	rateHit(r.Context(), h.limiter, r, "reset", email, generalLimit, generalWindow)
+
 	_, _, _ = h.email.ForgotPassword(r.Context(), email)
 
 	renderTemplate(w, "forgot-password.html", map[string]any{

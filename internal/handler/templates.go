@@ -1,27 +1,24 @@
 package handler
 
 import (
+	"embed"
 	"html/template"
 	"net/http"
 	"path/filepath"
-	"runtime"
 	"sync"
 )
+
+//go:embed templates/*.html
+var templateFS embed.FS
 
 var (
 	tmplOnce sync.Once
 	tmpl     *template.Template
 )
 
-func templatesDir() string {
-	_, filename, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(filename), "..", "..", "templates")
-}
-
 func getTemplates() *template.Template {
 	tmplOnce.Do(func() {
-		pattern := filepath.Join(templatesDir(), "*.html")
-		tmpl = template.Must(template.ParseGlob(pattern))
+		tmpl = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 	})
 	return tmpl
 }

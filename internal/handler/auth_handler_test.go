@@ -37,7 +37,13 @@ func TestMain(m *testing.M) {
 	_, _ = testPool.Exec(ctx, "DROP SCHEMA IF EXISTS auth CASCADE")
 	_, _ = testPool.Exec(ctx, "DROP TABLE IF EXISTS public.schema_migrations")
 	_, _ = testPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS auth")
-	for _, f := range []string{"../../migrations/000001_init.up.sql", "../../migrations/000002_oauth2_storage.up.sql"} {
+	for _, f := range []string{
+		"../../migrations/000001_init.up.sql",
+		"../../migrations/000002_oauth2_storage.up.sql",
+		"../../migrations/000003_productization.up.sql",
+		"../../migrations/000004_scope_grants.up.sql",
+		"../../migrations/000005_client_scopes.up.sql",
+	} {
 		out, _ := os.ReadFile(f)
 		if out != nil {
 			if _, err = testPool.Exec(ctx, string(out)); err != nil {

@@ -2,7 +2,7 @@
 
 **Goal:** Elevate from "our login service" to the central auth *product*: operable by a human, extensible per app.
 
-**Status:** Not started
+**Status:** ✅ Complete (2026-10-10) — all ACs covered by integration tests (`internal/handler/spec5_test.go`)
 **Depends on:** 4-prod-hardening.md
 
 ---
