@@ -88,7 +88,7 @@ func (h *AuthHandler) SignupForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/check-email?email="+url.QueryEscape(email), http.StatusFound)
+	http.Redirect(w, r, "/signup/check-email?email="+url.QueryEscape(email), http.StatusFound)
 }
 
 func (h *AuthHandler) LoginForm(w http.ResponseWriter, r *http.Request) {

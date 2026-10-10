@@ -25,8 +25,8 @@ func TestSignupFlow_HTML_RedirectsToCheckEmail(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusFound)
 	}
 	location := w.Header().Get("Location")
-	if !strings.HasPrefix(location, "/check-email?email=") {
-		t.Errorf("Location = %q, want /check-email?email=...", location)
+	if !strings.HasPrefix(location, "/signup/check-email?email=") {
+		t.Errorf("Location = %q, want /signup/check-email?email=...", location)
 	}
 }
 
@@ -110,5 +110,23 @@ func TestAuthorizeFlow_HTML_NoSession_ShowsRedirect(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "test@example.com") {
 		t.Error("check-email page should show the email")
+	}
+}
+
+// AC-3-9: both spec 1 §5 screen URLs resolve.
+func TestCheckEmail_SpecScreenURLs_Resolve(t *testing.T) {
+	for _, path := range []string{
+		"/signup/check-email?email=a@example.com",
+		"/forgot-password/check-email?email=a@example.com",
+	} {
+		req := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+		integRouter.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200 (AC-3-9)", path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "Check your inbox") {
+			t.Errorf("GET %s: missing check-email content (AC-3-9)", path)
+		}
 	}
 }

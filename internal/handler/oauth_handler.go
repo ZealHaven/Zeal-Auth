@@ -240,10 +240,25 @@ func (h *OAuth2Handler) JWKS(w http.ResponseWriter, r *http.Request) {
 // ---- /logout ----
 
 func (h *OAuth2Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	// Delete session from Redis
+	ctx := r.Context()
+
 	sessionID := service.GetSessionIDFromRequest(r)
 	if sessionID != "" {
-		_ = h.sessionSvc.Delete(r.Context(), sessionID)
+		if sess, err := h.sessionSvc.Get(ctx, sessionID); err == nil && sess != nil {
+			// Revoke all tokens issued to this user — same subject delete as
+			// password reset (AC-3-6: refresh token must not survive logout)
+			if _, err := h.pool.Exec(ctx,
+				`DELETE FROM auth.fosite_requests
+				 WHERE (key LIKE 'refreshtoken:%' OR key LIKE 'accesstoken:%')
+				   AND data->'session_data'->>'subject' = $1`,
+				sess.UserID,
+			); err != nil {
+				log.Printf("logout: revoke tokens: %v", err)
+				http.Error(w, "internal_error", http.StatusInternalServerError)
+				return
+			}
+		}
+		_ = h.sessionSvc.Delete(ctx, sessionID)
 	}
 
 	service.ClearSessionCookie(w, h.config.CookieDomain)

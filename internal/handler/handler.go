@@ -56,6 +56,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("GET /forgot-password", ah.ForgotPasswordPage)
 	mux.HandleFunc("GET /reset-password", ah.ResetPasswordPage)
 	mux.HandleFunc("GET /check-email", ah.CheckEmailPage)
+	// Spec 1 §5 URLs (3.9): both screen paths resolve to the same page
+	mux.HandleFunc("GET /signup/check-email", ah.CheckEmailPage)
+	mux.HandleFunc("GET /forgot-password/check-email", ah.CheckEmailPage)
 	mux.HandleFunc("GET /link-account", func(w http.ResponseWriter, r *http.Request) {
 		renderTemplate(w, "link-account.html", map[string]string{
 			"Provider": r.URL.Query().Get("provider"),

@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 type Config struct {
 	DatabaseURL  string
@@ -33,6 +36,7 @@ type Config struct {
 }
 
 func Load() *Config {
+	loadDotEnv()
 	return &Config{
 		DatabaseURL:  getenv("DATABASE_URL", "postgres://auth:auth@localhost:5435/auth?sslmode=disable"),
 		RedisURL:     getenv("REDIS_URL", "redis://localhost:6379/0"),
@@ -69,4 +73,29 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// loadDotEnv populates unset environment variables from ./.env (AC-3-4:
+// `cp .env.example .env && just dev` must work with no shell exports).
+// Real environment always wins. Missing .env file is not an error.
+func loadDotEnv() {
+	data, err := os.ReadFile(".env")
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		if os.Getenv(key) == "" {
+			_ = os.Setenv(key, val)
+		}
+	}
 }

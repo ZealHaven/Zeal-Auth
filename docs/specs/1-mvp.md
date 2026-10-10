@@ -5,7 +5,7 @@
 **Stack:** Go + fosite (OAuth2/OIDC), Postgres, Redis, Docker Compose, Cloudflare Tunnel.
 **Domain:** `auth.yourdomain.com`
 
-**Progress (2026-10-07):** core implemented + verified via `TestE2E_AuthorizeCodeFlow_HappyPath` and live smoke. Legend: ✅ done · ⚠️ partial/untested · ❌ not done. **Every remaining ⚠️/❌ and all of §8 now points at an item in spec 3, 4, or 5 — this doc is fully delegated; treat those specs as the backlog.**
+**Progress (2026-10-09):** core implemented + verified via `TestE2E_AuthorizeCodeFlow_HappyPath` and live smoke; spec 3 complete (silent SSO, logout revocation, JWKS local-validation, check-email URLs). Legend: ✅ done · ⚠️ partial/untested · ❌ not done. **Remaining ❌ items all point at specs 4/5 — this doc is fully delegated; treat those specs as the backlog.**
 
 ---
 
@@ -188,7 +188,7 @@ Unique constraint: (provider, provider_user_id).
 4. Product exchanges code + code_verifier at `/token` → access, ID, refresh tokens
 5. Product verifies JWT locally via JWKS
 
-### C — SSO across products (silent auth) ⚠️ single-session auto-approve tested; second-client scenario pending (spec 3, AC-3-3)
+### C — SSO across products (silent auth) ✅ (spec 3: `TestE2E_SilentSSO_TwoClients` — two clients, session → authorize client 2, no login prompt)
 1. User has valid session on auth.yourdomain.com
 2. Opens Product B → redirects to `/authorize`
 3. Valid session → auto-issue code, no login screen
@@ -198,15 +198,15 @@ Unique constraint: (provider, provider_user_id).
 2. App calls `/token` with `grant_type=refresh_token`
 3. Auth checks revocation list, rotates refresh token, issues new pair
 
-### E — Logout ✅ (session cleared; tests: `TestE2E_Session_Logout`, e2e `session.spec.ts`)
-1. User hits `/logout` → session cookie cleared
+### E — Logout ✅ (session cleared + user's fosite tokens revoked; tests: `TestE2E_Session_Logout`, `TestE2E_Logout_RevokesRefreshToken`, e2e `session.spec.ts`)
+1. User hits `/logout` → session cookie cleared, refresh/access tokens deleted (spec 3, AC-3-6)
 
 ---
 
 ## 5. Screens (UI)
 
 > ✅ All screens implemented (templates in `templates/`; includes link-account prompt not listed below).
-> ⚠️ URL deviation: check-email screens live at `GET /check-email` (single route), not `/signup/check-email` / `/forgot-password/check-email` → **spec 3, 3.9** (reconcile).
+> ✅ URL conformance (spec 3, 3.9): `/signup/check-email` and `/forgot-password/check-email` both resolve; signup form redirects to `/signup/check-email`.
 
 | Screen | URL | Purpose |
 |--------|-----|---------|
@@ -275,7 +275,7 @@ Unique constraint: (provider, provider_user_id).
 ### OIDC Discovery + JWKS
 - ✅ **AC-OIDC-1** `GET /.well-known/openid-configuration` → valid document with issuer, endpoints, scopes. (`TestE2E_Discovery_Document`; endpoints now truthful per spec 2.6)
 - ✅ **AC-OIDC-2** `GET /jwks.json` → current signing keys in JWK format. (`TestE2E_JWKS_ReturnsKeys`)
-- ⚠️ **AC-OIDC-3** JWT signed with published key validates against JWKS. Keys published + ID tokens issued; signature-checks-against-JWKS not asserted in tests (planned: spec 3 reference client).
+- ✅ **AC-OIDC-3** JWT signed with published key validates against JWKS. (`TestE2E_ReferenceClient_JWKSVerify` — signature verified against `/jwks.json`, flipped signature rejected; spec 3, AC-3-7)
 - ❌ **AC-OIDC-4** During rotation, both old + new keys published simultaneously. `GetAllActiveKeys` supports it; rotation has no caller yet (→ spec 4, 4.6).
 
 ### Client Registry
@@ -285,16 +285,16 @@ Unique constraint: (provider, provider_user_id).
 - ✅ **AC-CLIENT-4** client_id always unique regardless of display name.
 
 ### JWT Tokens
-- ⚠️ **AC-TOKEN-1** Valid access token validates locally via JWKS, no callback to auth service. Design in place (RS256, keys published); local-validation check pending spec 3 reference client.
+- ✅ **AC-TOKEN-1** Valid ID/access token validates locally via JWKS, no callback to auth service. (`TestE2E_ReferenceClient_JWKSVerify`; spec 3, AC-3-7. Note: profile claims still come from `/userinfo` — signature+`sub`/`iss` validate locally.)
 - ✅ **AC-TOKEN-2** Access token past TTL (15 min) → rejected. (`TestE2E_Token_Guards` ages stored access-token session → userinfo 401)
 - ✅ **AC-TOKEN-3** `grant_type=refresh_token` with valid token → new access+refresh pair; old refresh invalidated (rotation).
 - ✅ **AC-TOKEN-4** Replayed refresh token → rejected, whole token family revoked (theft detection).
-- ⚠️ **AC-TOKEN-5** Revoked refresh token (logout, password reset, client disabled) → never redeemable. Password reset revokes ✅ (spec 2.4); logout clears session only — refresh token survives logout ❌ → **spec 3, AC-3-6**; client disabled n/a → **spec 5, AC-CLIENT-3 / AC-5-2**.
+- ✅ **AC-TOKEN-5** Revoked refresh token (logout, password reset, client disabled) → never redeemable. Password reset ✅ (`TestResetPassword_RevokesFositeTokens`); logout ✅ (spec 3, `TestE2E_Logout_RevokesRefreshToken`); client disabled n/a → **spec 5, AC-CLIENT-3 / AC-5-2**.
 - ✅ **AC-TOKEN-6** ID tokens contain `sub`, `iss`, `aud`, `exp`, `iat` + profile/email claims. (happy-path asserts claims incl. `email`)
 
 ### SSO Session Cookie
 - ✅ **AC-SESSION-1** Login sets session cookie on auth domain: `HttpOnly`, `Secure`, `SameSite`.
-- ⚠️ **AC-SESSION-2** Valid session → second product's `/authorize` issues code, no login screen. Same-session auto-approve tested (`TestE2E_Session_AutoApprove`); true two-client scenario → spec 3, AC-3-3.
+- ✅ **AC-SESSION-2** Valid session → second product's `/authorize` issues code, no login screen. (`TestE2E_Session_AutoApprove` + `TestE2E_SilentSSO_TwoClients` — true two-client scenario; spec 3, AC-3-3)
 - ✅ **AC-SESSION-3** Expired/missing session → login screen shown. (`TestE2E_Session_Missing_ShowsLogin`)
 - ✅ **AC-SESSION-4** Logout clears session cookie; next `/authorize` requires re-login. (`TestE2E_Session_Logout` + e2e)
 

@@ -12,13 +12,11 @@ export default async function globalSetup() {
   try { execSync(`fuser -k ${PORT}/tcp`, { stdio: 'pipe' }); } catch {}
   await new Promise((r) => setTimeout(r, 500));
 
-  // Build binary
-  if (!existsSync(BIN)) {
-    execSync(`go build -o ${BIN} ./cmd/server`, {
-      cwd: resolve(__dirname, '..'),
-      stdio: 'inherit',
-    });
-  }
+  // Always rebuild — a stale binary would test old code
+  execSync(`go build -o ${BIN} ./cmd/server`, {
+    cwd: resolve(__dirname, '..'),
+    stdio: 'inherit',
+  });
 
   // Run migrations
   const migrationFile = resolve(__dirname, '..', 'migrations', '000001_init.up.sql');

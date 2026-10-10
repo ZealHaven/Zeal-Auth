@@ -2,7 +2,7 @@
 
 **Goal:** Make the token-issuing path actually work. Blocking for all other phases.
 
-**Status:** ✅ Complete (2026-10-07) — 2.9 partial (see note)
+**Status:** ✅ Complete (2026-10-07) — 2.9 ✅ closed in spec 3 (2026-10-09)
 **Depends on:** 1-mvp.md
 
 Legend: ✅ done · ⚠️ partial · ❌ not done
@@ -21,7 +21,7 @@ Legend: ✅ done · ⚠️ partial · ❌ not done
 | ✅ 2.6 | Fix discovery doc | `/revoke` advertised but no route → registered `POST /revoke` + `POST /introspect` (fosite handlers existed, HTTP routes were missing); discovery also advertises per-endpoint auth methods. |
 | ✅ 2.7 | Finish social login | `BeginLink`/`CompleteLink` service methods + `link_token` form flow calls `LinkIdentity`; broker callback redirects to `returnTo` (no more raw JSON). |
 | ✅ 2.8 | Secrets hygiene | `FOSITE_GLOBAL_SECRET` + `ADMIN_TOKEN` in `.env.example` (≥32 bytes); `APP_ENV=prod` fail-fast boot on missing/weak `FOSITE_GLOBAL_SECRET`, `KEY_ENCRYPTION_KEY` (64 hex), `ADMIN_TOKEN`. Dev fallback kept for dev only. |
-| ⚠️ 2.9 | Fix test rot | ✅ `config_test.go` port fixed · ✅ tests moved to dedicated `auth_test` DB (`internal/db/testing.go`) — no more `DROP SCHEMA` on dev DB · ✅ `*.test`/`test-results/` gitignored, junk deleted · ❌ "skip cleanly if pg down" NOT done — TestMains still panic when Postgres is down. |
+| ✅ 2.9 | Fix test rot | ✅ `config_test.go` port fixed · ✅ tests moved to dedicated `auth_test` DB (`internal/db/testing.go`) — no more `DROP SCHEMA` on dev DB · ✅ `*.test`/`test-results/` gitignored, junk deleted · ✅ "skip cleanly if pg down" done (spec 3, 3.8): all TestMains call `db.SkipIfNoPostgres` → `SKIP:` message + exit 0. |
 | ✅ 2.10 | Happy-path OAuth integration test | `TestE2E_AuthorizeCodeFlow_HappyPath`: login → authorize → exchange → userinfo → refresh rotation → replay rejection. Smoke-verified across server restart (Postgres persistence). |
 
 ## 2. Acceptance Criteria
@@ -37,4 +37,4 @@ Legend: ✅ done · ⚠️ partial · ❌ not done
 - ✅ **AC-2-9** Discovery document lists only routes that exist.
 - ✅ **AC-2-10** Google/GitHub: callback → redirect to originating app with session; existing email + no link → link prompt that actually links.
 - ✅ **AC-2-11** Boot with unset `FOSITE_GLOBAL_SECRET` in prod mode → fail fast (no hardcoded fallback).
-- ⚠️ **AC-2-12** `just test` green ✅ (all packages pass on `auth_test` DB); pg-down graceful skip → **spec 3 (3.8)**.
+- ✅ **AC-2-12** `just test` green ✅ (all packages pass on `auth_test` DB); pg-down graceful skip ✅ (spec 3, 3.8 — verified `go test ./...` exit 0 with Postgres stopped, `SKIP:` printed).

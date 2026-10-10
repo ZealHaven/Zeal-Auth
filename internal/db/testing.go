@@ -58,3 +58,14 @@ func isDuplicateDB(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "42P04"
 }
+
+// SkipIfNoPostgres ensures the test database is reachable. When it is not
+// (Postgres stopped), it prints a SKIP notice and exits the test binary with
+// status 0 so `go test ./...` stays green without infra (AC-2-12, spec 3.8).
+// Call from TestMain before any pool/DB work.
+func SkipIfNoPostgres(ctx context.Context) {
+	if err := EnsureTestDatabase(ctx); err != nil {
+		fmt.Printf("SKIP: postgres unavailable: %v\n", err)
+		os.Exit(0)
+	}
+}

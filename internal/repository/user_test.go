@@ -20,9 +20,7 @@ func testDBURL() string {
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	if err := db.EnsureTestDatabase(ctx); err != nil {
-		panic("ensure test database: " + err.Error())
-	}
+	db.SkipIfNoPostgres(ctx)
 	var err error
 	testPool, err = pgxpool.New(ctx, testDBURL())
 	if err != nil {

@@ -24,6 +24,30 @@ import (
 func buildServer(cfg *config.Config) (http.Handler, func()) {
 	ctx := context.Background()
 
+	globalSecret := os.Getenv("FOSITE_GLOBAL_SECRET")
+	keyEncKey := cfg.KeyEncryptionKey
+	if cfg.Env == "prod" {
+		// Fail fast: no dev fallbacks in prod
+		if len(globalSecret) < 32 {
+			log.Fatalf("FOSITE_GLOBAL_SECRET must be set to at least 32 bytes in prod")
+		}
+		if len(keyEncKey) != 64 {
+			log.Fatalf("KEY_ENCRYPTION_KEY must be 64 hex chars (32 bytes) in prod")
+		}
+		if cfg.AdminToken == "" {
+			log.Fatalf("ADMIN_TOKEN must be set in prod (client registry would be disabled)")
+		}
+	}
+	if len(globalSecret) < 32 {
+		globalSecret = "fosite-dev-secret-replace-in-prod-32bytes!!"
+	}
+	if keyEncKey == "" {
+		// Dev fallback: .env.example ships KEY_ENCRYPTION_KEY empty; boot must
+		// still work after `cp .env.example .env` (AC-3-4)
+		keyEncKey = "0000000000000000000000000000000000000000000000000000000000000001"
+	}
+	cfg.KeyEncryptionKey = keyEncKey
+
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db: %v", err)
@@ -40,23 +64,6 @@ func buildServer(cfg *config.Config) (http.Handler, func()) {
 		cfg.CookieDomain,
 	)
 	fositeCfg.AdminToken = cfg.AdminToken
-
-	globalSecret := os.Getenv("FOSITE_GLOBAL_SECRET")
-	if cfg.Env == "prod" {
-		// Fail fast: no dev fallbacks in prod
-		if len(globalSecret) < 32 {
-			log.Fatalf("FOSITE_GLOBAL_SECRET must be set to at least 32 bytes in prod")
-		}
-		if len(cfg.KeyEncryptionKey) != 64 {
-			log.Fatalf("KEY_ENCRYPTION_KEY must be 64 hex chars (32 bytes) in prod")
-		}
-		if cfg.AdminToken == "" {
-			log.Fatalf("ADMIN_TOKEN must be set in prod (client registry would be disabled)")
-		}
-	}
-	if len(globalSecret) < 32 {
-		globalSecret = "fosite-dev-secret-replace-in-prod-32bytes!!"
-	}
 	fositeCfg.GlobalSecret = []byte(globalSecret)
 
 	oauthHandler, err := handler.NewFositeServer(pool, keySvc, fositeCfg)

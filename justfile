@@ -43,6 +43,14 @@ migrate-down:
 test:
     go test ./... -count=1 -p 1
 
+# Seed dev data: verified test user + two demo clients (AC-3-4)
+seed:
+    go run ./cmd/seed
+
+# Register one OAuth client; secret printed once: just seed-client <name> <redirect-uri>
+seed-client +args:
+    go run ./cmd/seed client {{args}}
+
 # Run all tests with verbose output
 test-verbose:
     go test ./... -v -count=1 -p 1
